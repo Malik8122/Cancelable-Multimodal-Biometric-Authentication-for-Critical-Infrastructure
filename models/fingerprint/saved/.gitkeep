@@ -1,0 +1,4 @@
+Trained checkpoints (fingerprint_embedder.pt) land here after running
+notebooks/03_fingerprint_training_and_testing.ipynb on Colab. Tracked via
+Git LFS (see .gitattributes) - commit them with a normal `git add` once
+produced.

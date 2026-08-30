@@ -1,0 +1,3 @@
+Trained checkpoints (iris_embedder.pt) land here after running
+notebooks/02_iris_training_and_testing.ipynb on Colab. Tracked via Git LFS
+(see .gitattributes) - commit them with a normal `git add` once produced.

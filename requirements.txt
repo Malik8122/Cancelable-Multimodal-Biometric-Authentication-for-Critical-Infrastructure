@@ -1,0 +1,27 @@
+# --- Core ---
+numpy>=1.26
+scipy>=1.11
+opencv-python-headless>=4.9
+Pillow>=10.2
+PyYAML>=6.0
+
+# --- Deep learning (CPU by default; install a CUDA build separately on Colab/GPU machines) ---
+torch>=2.2
+torchvision>=0.17
+facenet-pytorch>=2.5.3
+
+# --- Evaluation ---
+scikit-learn>=1.4
+matplotlib>=3.8
+
+# --- Testing ---
+pytest>=8.0
+h5py>=3.10
+
+# --- Real GPU training orchestration (Kaggle Kernels) ---
+kaggle>=1.6
+
+# --- Backend (added in Phase 2) ---
+# fastapi>=0.110
+# uvicorn>=0.27
+# sqlalchemy>=2.0

@@ -1,0 +1,52 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- Datasets & raw biometric data (NEVER commit) ---
+data/
+datasets/
+raw_images/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+!docs/**/*.png
+!frontend/**/*.png
+!**/sample_assets/*.png
+
+# --- Model checkpoints tracked via Git LFS, but keep local scratch dirs out ---
+models/**/saved/*.tmp
+*.ckpt.tmp
+
+# --- Backend / DB ---
+*.db
+*.sqlite3
+.env
+.env.*
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- Evaluation outputs (regenerable) ---
+evaluation/results/*.png
+evaluation/results/*.csv
+!evaluation/results/.gitkeep
+
+# --- Kaggle credentials / pulled kernel output (never commit) ---
+kaggle.json
+kaggle_output/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
