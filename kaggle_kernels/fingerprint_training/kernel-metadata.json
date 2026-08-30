@@ -1,5 +1,5 @@
 {
-  "id": "<your-kaggle-username>/fingerprint-embedding-training",
+  "id": "<your-kaggle-username>/fingerprint-embedding-training-phase-1",
   "title": "Fingerprint Embedding Training (Phase 1)",
   "code_file": "fingerprint-embedding-training.ipynb",
   "language": "python",

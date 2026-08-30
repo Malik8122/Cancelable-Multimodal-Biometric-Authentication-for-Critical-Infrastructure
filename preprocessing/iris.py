@@ -74,23 +74,30 @@ class IrisPreprocessor:
         pupil: tuple[int, int, int],
         iris: tuple[int, int, int],
     ) -> np.ndarray:
+        """Vectorized Daugman rubber-sheet unwrapping.
+
+        Fully numpy-vectorized (no per-pixel Python loop) - a naive
+        nested-loop version does strip_height * strip_width Python-level
+        iterations per image (32768 for the default size), which becomes a
+        real bottleneck across a dataset of thousands of images.
+        """
         px, py, pr = pupil
         ix, iy, ir = iris
-        strip = np.zeros((self.strip_height, self.strip_width), dtype=np.uint8)
 
         thetas = np.linspace(0, 2 * np.pi, self.strip_width, endpoint=False)
         radii = np.linspace(0, 1, self.strip_height, endpoint=False)
 
-        for theta_idx, theta in enumerate(thetas):
-            cos_t, sin_t = np.cos(theta), np.sin(theta)
-            x_p, y_p = px + pr * cos_t, py + pr * sin_t
-            x_i, y_i = ix + ir * cos_t, iy + ir * sin_t
-            for r_idx, r in enumerate(radii):
-                x = int(x_p + r * (x_i - x_p))
-                y = int(y_p + r * (y_i - y_p))
-                if 0 <= y < gray.shape[0] and 0 <= x < gray.shape[1]:
-                    strip[r_idx, theta_idx] = gray[y, x]
+        cos_t, sin_t = np.cos(thetas), np.sin(thetas)  # (W,)
+        x_p, y_p = px + pr * cos_t, py + pr * sin_t  # (W,)
+        x_i, y_i = ix + ir * cos_t, iy + ir * sin_t  # (W,)
 
+        # Broadcast radii (H,1) against theta-dependent boundary points (1,W) -> (H,W)
+        x = (x_p[None, :] + radii[:, None] * (x_i - x_p)[None, :]).astype(np.int32)
+        y = (y_p[None, :] + radii[:, None] * (y_i - y_p)[None, :]).astype(np.int32)
+
+        valid = (x >= 0) & (x < gray.shape[1]) & (y >= 0) & (y < gray.shape[0])
+        strip = np.zeros((self.strip_height, self.strip_width), dtype=np.uint8)
+        strip[valid] = gray[y[valid], x[valid]]
         return strip
 
     def preprocess(self, image: np.ndarray) -> np.ndarray:

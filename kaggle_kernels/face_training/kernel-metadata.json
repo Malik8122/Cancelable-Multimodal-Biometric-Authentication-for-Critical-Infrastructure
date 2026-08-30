@@ -1,5 +1,5 @@
 {
-  "id": "<your-kaggle-username>/face-embedding-training",
+  "id": "<your-kaggle-username>/face-embedding-training-phase-1",
   "title": "Face Embedding Training (Phase 1)",
   "code_file": "face-embedding-training.ipynb",
   "language": "python",

@@ -24,10 +24,38 @@ KAGGLE_KERNELS_DIR = REPO_ROOT / "kaggle_kernels"
 POLL_INTERVAL_SECONDS = 30
 MAX_WAIT_SECONDS = 60 * 60  # Kaggle GPU kernels are capped at a few hours anyway
 
+
+def find_kaggle_executable() -> str:
+    """Resolve the kaggle CLI even when its install location isn't on PATH.
+
+    pip installs the `kaggle` console script into the Python user Scripts
+    directory, which isn't always on PATH (notably on Windows) - this checks
+    PATH first, then falls back to `<user base>/Scripts/kaggle(.exe)`.
+    """
+    found = shutil.which("kaggle")
+    if found:
+        return found
+
+    import os
+    import sysconfig
+
+    scripts_dir = Path(sysconfig.get_path("scripts", f"{os.name}_user"))
+    for candidate in (scripts_dir / "kaggle.exe", scripts_dir / "kaggle"):
+        if candidate.exists():
+            return str(candidate)
+
+    raise SystemExit(
+        "Could not find the `kaggle` CLI executable. Run `pip install kaggle` "
+        "and make sure it's on PATH, or adjust find_kaggle_executable()."
+    )
+
+
+KAGGLE_EXE = find_kaggle_executable()
+
 MODALITIES = {
-    "face": ("face_training", "face-embedding-training"),
-    "iris": ("iris_training", "iris-embedding-training"),
-    "fingerprint": ("fingerprint_training", "fingerprint-embedding-training"),
+    "face": ("face_training", "face-embedding-training-phase-1"),
+    "iris": ("iris_training", "iris-embedding-training-phase-1"),
+    "fingerprint": ("fingerprint_training", "fingerprint-embedding-training-phase-1"),
 }
 
 
@@ -52,22 +80,33 @@ def patch_kernel_metadata(kernel_dir: Path, username: str) -> str:
 
 
 def run(cmd: list[str]) -> str:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    import os
+
+    # The kaggle CLI reads notebook files as UTF-8; on Windows the default
+    # subprocess locale encoding (cp1252) can't decode the unicode arrows/
+    # checkmarks used in these notebooks' markdown cells, so force UTF-8 mode
+    # for the child process explicitly rather than stripping those characters.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
     output = result.stdout + result.stderr
     print(output)
-    if result.returncode != 0:
+    # The kaggle CLI sometimes reports a failure as plain stdout text with
+    # exit code 0 (e.g. "Kernel push error: ...") rather than a non-zero
+    # return code - check for that explicitly rather than trusting the
+    # return code alone.
+    if result.returncode != 0 or "kernel push error" in output.lower():
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{output}")
     return output
 
 
 def push_kernel(kernel_dir: Path) -> None:
-    run(["kaggle", "kernels", "push", "-p", str(kernel_dir)])
+    run([KAGGLE_EXE, "kernels", "push", "-p", str(kernel_dir)])
 
 
 def wait_for_completion(kernel_id: str) -> None:
     waited = 0
     while waited < MAX_WAIT_SECONDS:
-        status_output = run(["kaggle", "kernels", "status", kernel_id]).lower()
+        status_output = run([KAGGLE_EXE, "kernels", "status", kernel_id]).lower()
         if "complete" in status_output:
             print(f"{kernel_id}: complete")
             return
@@ -82,7 +121,7 @@ def wait_for_completion(kernel_id: str) -> None:
 def pull_output_and_install_checkpoints(kernel_id: str, modality: str) -> None:
     output_dir = REPO_ROOT / "kaggle_output" / modality
     output_dir.mkdir(parents=True, exist_ok=True)
-    run(["kaggle", "kernels", "output", kernel_id, "-p", str(output_dir)])
+    run([KAGGLE_EXE, "kernels", "output", kernel_id, "-p", str(output_dir)])
 
     saved_source = output_dir / "repo" / "models" / modality / "saved"
     saved_dest = REPO_ROOT / "models" / modality / "saved"

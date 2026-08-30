@@ -32,12 +32,18 @@ automatically from your `kaggle.json`).
 kaggle kernels push -p kaggle_kernels/face_training
 
 # poll status until it finishes
-kaggle kernels status <username>/face-embedding-training
+kaggle kernels status <username>/face-embedding-training-phase-1
 
 # pull the output (includes the repo clone with checkpoints under
 # repo/models/face/saved/) once status is "complete"
-kaggle kernels output <username>/face-embedding-training -p ./kaggle_output/face
+kaggle kernels output <username>/face-embedding-training-phase-1 -p ./kaggle_output/face
 ```
+
+Note: Kaggle derives the actual kernel slug from the *title* in
+`kernel-metadata.json` if it doesn't match the `id` you set, so the `id`
+fields here already include the `-phase-1` suffix Kaggle would otherwise add
+automatically (avoids the "kernel title does not resolve to the specified
+id" mismatch warning).
 
 Repeat for `iris_training` and `fingerprint_training`. `scripts/run_kaggle_kernels.py`
 automates all three: push → poll → pull → copy the resulting `.pt`/`.h5`
