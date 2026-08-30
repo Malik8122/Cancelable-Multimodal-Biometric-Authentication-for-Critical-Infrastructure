@@ -1,0 +1,15 @@
+{
+  "id": "<your-kaggle-username>/iris-embedding-training",
+  "title": "Iris Embedding Training (Phase 1)",
+  "code_file": "iris-embedding-training.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "sondosaabed/casia-iris-thousand"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

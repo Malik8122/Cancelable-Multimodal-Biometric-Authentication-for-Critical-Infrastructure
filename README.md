@@ -82,6 +82,8 @@ fusion/                Multimodal score fusion (Phase 3)
 evaluation/            Shared metrics (FAR/FRR/EER/ROC/AUC) + experiment runners
 frontend/              React dashboard (Phase 3)
 notebooks/             Colab notebooks: dataset download, fine-tuning, image testing
+kaggle_kernels/         Kaggle Kernel equivalents: unattended real-GPU training via the API
+scripts/                run_kaggle_kernels.py: push/monitor/pull all 3 Kaggle kernels
 docs/                  Architecture, datasets/licensing, privacy analysis, roadmap
 tests/                 Offline tests against synthetic images (no GPU/dataset needed)
 ```
@@ -113,29 +115,45 @@ pipeline is correctly wired for all three modalities:
 pytest
 ```
 
-### Train the models (Colab)
+### Train the models
 
-Open each notebook in Google Colab (GPU runtime) and run top to bottom — no
-Google Drive mount required:
+Two equivalent ways to run the same training/evaluation/image-testing logic
+— pick whichever fits your workflow. Either way, each run: downloads its
+modality's dataset (see licensing notes below), preprocesses it with this
+repo's own `preprocessing/` code, fine-tunes the embedding model with an
+ArcFace head, **saves the resulting checkpoint** (both `.pt` — the format
+`models/<modality>/inference.py` actually loads — and a companion `.h5`
+interoperability export) to `models/<modality>/saved/`, evaluates it
+(accuracy/FAR/FRR/EER/ROC-AUC), and runs an image-based testing section —
+genuine vs. impostor pairs and a gallery-matching demo, with the actual
+images and similarity scores displayed, not just a metrics table.
+
+**Option A — Google Colab (manual, interactive):** open each notebook below
+in Colab (GPU runtime) and run top to bottom — no Google Drive mount
+required.
 
 - [`notebooks/01_face_training_and_testing.ipynb`](notebooks/01_face_training_and_testing.ipynb)
 - [`notebooks/02_iris_training_and_testing.ipynb`](notebooks/02_iris_training_and_testing.ipynb)
 - [`notebooks/03_fingerprint_training_and_testing.ipynb`](notebooks/03_fingerprint_training_and_testing.ipynb)
 
-Each notebook: clones this repo into the Colab runtime, downloads its
-modality's dataset (see licensing notes below), preprocesses it with this
-repo's own `preprocessing/` code, fine-tunes the embedding model with an
-ArcFace head, **saves the resulting checkpoint** to
-`models/<modality>/saved/`, evaluates it (accuracy/FAR/FRR/EER/ROC-AUC), and
-runs an image-based testing section — genuine vs. impostor pairs and a
-gallery-matching demo, with the actual images and similarity scores
-displayed, not just a metrics table.
+Then download the resulting checkpoints and commit them locally.
 
-After training, download the checkpoint and commit it back locally:
+**Option B — Kaggle Kernels (unattended, scriptable, free GPU):** see
+[`kaggle_kernels/README.md`](kaggle_kernels/README.md). Datasets are attached
+natively (SOCOFing, the CASIA-Iris-Thousand mirror) instead of downloaded
+manually. Once you have a Kaggle API token in place:
 
 ```bash
-git add models/face/saved/face_embedder.pt   # Git LFS picks this up automatically
-git commit -m "Add fine-tuned face embedding checkpoint"
+python scripts/run_kaggle_kernels.py
+```
+
+pushes all 3 kernels, waits for each to finish on Kaggle's GPU, pulls the
+resulting `.pt`/`.h5` checkpoints, and installs them into
+`models/<modality>/saved/` automatically. Then:
+
+```bash
+git add models/*/saved/*.pt models/*/saved/*.h5   # Git LFS picks these up automatically
+git commit -m "Add trained checkpoints from Kaggle GPU training"
 git push
 ```
 

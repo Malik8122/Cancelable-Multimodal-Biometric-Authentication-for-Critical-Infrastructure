@@ -41,6 +41,10 @@ evaluation/results/*.png
 evaluation/results/*.csv
 !evaluation/results/.gitkeep
 
+# --- Kaggle credentials / pulled kernel output (never commit) ---
+kaggle.json
+kaggle_output/
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db

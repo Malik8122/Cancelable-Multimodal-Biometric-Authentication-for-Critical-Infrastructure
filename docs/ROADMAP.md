@@ -14,11 +14,13 @@ further along than the others.
   (CLAHE + Gabor filtering).
 - A single embedding interface (`BaseEmbedder.extract_embedding`) all three
   modalities implement identically.
-- Colab notebooks (`notebooks/01`–`03`) that download each modality's dataset,
-  fine-tune its embedding model with an ArcFace head, **save the resulting
-  checkpoint**, evaluate it (Experiment 1: accuracy/FAR/FRR/EER/ROC-AUC), and
-  run a dedicated image-based testing section (genuine/impostor pairs +
-  gallery matching, visualized).
+- Colab notebooks (`notebooks/01`–`03`) *and* equivalent Kaggle Kernels
+  (`kaggle_kernels/`, driven unattended via `scripts/run_kaggle_kernels.py`)
+  that download each modality's dataset, fine-tune its embedding model with
+  an ArcFace head, **save the resulting checkpoint** (`.pt` + a companion
+  `.h5` export), evaluate it (Experiment 1:
+  accuracy/FAR/FRR/EER/ROC-AUC), and run a dedicated image-based testing
+  section (genuine/impostor pairs + gallery matching, visualized).
 - `tests/` — offline, synthetic-image smoke tests proving the
   preprocessing → embedding pipeline is correctly wired for all 3 modalities,
   independent of whether real checkpoints exist yet (`pytest tests/`).

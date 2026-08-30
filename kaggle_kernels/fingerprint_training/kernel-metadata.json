@@ -1,0 +1,15 @@
+{
+  "id": "<your-kaggle-username>/fingerprint-embedding-training",
+  "title": "Fingerprint Embedding Training (Phase 1)",
+  "code_file": "fingerprint-embedding-training.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "ruizgara/socofing"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
