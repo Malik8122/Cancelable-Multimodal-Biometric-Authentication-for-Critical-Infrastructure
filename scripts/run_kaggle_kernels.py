@@ -110,8 +110,10 @@ def wait_for_completion(kernel_id: str) -> None:
         if "complete" in status_output:
             print(f"{kernel_id}: complete")
             return
-        if "error" in status_output or "cancelled" in status_output:
-            raise RuntimeError(f"{kernel_id} failed - see output above")
+        if "error" in status_output or "cancel" in status_output:
+            # Catches CANCELLED as well as CANCEL_ACKNOWLEDGED/CANCEL_REQUESTED -
+            # matching only the exact string "cancelled" missed those states.
+            raise RuntimeError(f"{kernel_id} failed or was cancelled - status: {status_output.strip()}")
         print(f"{kernel_id}: still running, waiting {POLL_INTERVAL_SECONDS}s...")
         time.sleep(POLL_INTERVAL_SECONDS)
         waited += POLL_INTERVAL_SECONDS
