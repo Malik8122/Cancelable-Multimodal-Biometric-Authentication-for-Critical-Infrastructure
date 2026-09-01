@@ -10,6 +10,15 @@ production-hardened security product — see [Limitations & honest
 scope](#limitations--honest-scope) before drawing any stronger conclusion
 from it.
 
+**Preparing for a project evaluation/viva?** [`docs/PROJECT_REPORT.md`](docs/PROJECT_REPORT.md)
+is the full in-depth writeup — motivation, why multimodal, why cancelable
+biometrics, how this compares to existing solutions, every model/dataset
+decision justified, the real GPU training results (including the honest
+ones), and a prepared-answers section for the questions reviewers are most
+likely to ask. [`docs/COMPUTER_VISION.md`](docs/COMPUTER_VISION.md) is the
+companion deep dive into every computer-vision technique used, with code
+references.
+
 ## The problem
 
 Traditional biometric systems store templates derived directly from a
