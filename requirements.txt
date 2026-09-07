@@ -21,7 +21,20 @@ h5py>=3.10
 # --- Real GPU training orchestration (Kaggle Kernels) ---
 kaggle>=1.6
 
-# --- Backend (added in Phase 2) ---
-# fastapi>=0.110
-# uvicorn>=0.27
-# sqlalchemy>=2.0
+# --- Cancelable template protection (template_protection/) ---
+cryptography>=42.0
+
+# --- Backend (Phase 2) ---
+fastapi>=0.110
+uvicorn[standard]>=0.27
+sqlalchemy>=2.0
+pydantic>=2.6
+pydantic-settings>=2.2
+python-multipart>=0.0.9
+
+# --- Voice (speaker verification) - real ECAPA-TDNN backbone + Kaggle/Colab training.
+# preprocessing/voice.py itself and this project's offline tests need none of
+# these (numpy/scipy only) - see docs/VOICE_MODEL.md's dependency note. ---
+torchaudio>=2.2
+speechbrain>=1.0
+webrtcvad>=2.0.10

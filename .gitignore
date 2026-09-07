@@ -30,6 +30,7 @@ models/**/saved/*.tmp
 *.sqlite3
 .env
 .env.*
+!.env.example
 
 # --- Frontend ---
 frontend/node_modules/

@@ -29,9 +29,9 @@
              BaseEmbedder.extract_embedding()
              -> fixed-length, L2-normalized embedding
                       |
-                      v                              [Phase 2]
-          template_protection/cancelable_transform.py
-          (keyed random projection -> nonlinear map -> quantize)
+                      v
+          template_protection/hkdf_keys.py + biohash.py
+          (keyed orthonormal projection -> keyed quantize -> keyed permute)
                       |
                       v
               Protected Biometric Template
