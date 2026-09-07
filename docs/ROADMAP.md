@@ -25,23 +25,43 @@ further along than the others.
   preprocessing → embedding pipeline is correctly wired for all 3 modalities,
   independent of whether real checkpoints exist yet (`pytest tests/`).
 
-## Phase 2 — Privacy layer (next)
+### Voice — 4th modality (added alongside Phase 1's foundation)
 
-- `template_protection/cancelable_transform.py`: a BioHashing-style transform
-  (keyed random projection → nonlinear mapping → quantization/binarization)
-  applied identically to all 3 modalities' embeddings.
-- `template_protection/key_management.py`: HKDF-derived, per-user/per-application
-  transformation keys — never stored in plaintext beside the protected template.
-- FastAPI backend + SQLite: `/enroll`, `/authenticate`, `/verify/{modality}`,
-  `/user/{id}` — storing **only** protected templates, never raw images or
-  raw embeddings.
-- Experiment 2 (protected vs. unprotected recognition performance),
-  Experiment 4 (revocability: same biometric + different keys → different,
-  unlinkable templates), and a diversity demonstration (same user, different
-  application keys → different templates).
-- `docs/PRIVACY_AND_SECURITY.md` filled in with the Experiment 5 analysis
-  (template leakage, replay, key compromise, reconstruction risk, database
-  compromise, cross-application linkability) — proportionate, non-overclaiming.
+**Status: implemented (pipeline); checkpoint training in progress.**
+
+Speaker verification via ECAPA-TDNN, added to the same standard as Face/Iris/
+Fingerprint: `preprocessing/voice.py`, `models/voice/`, a Colab notebook
+(`notebooks/04_voice_training.ipynb`) and Kaggle Kernel
+(`kaggle_kernels/voice_training/`), offline synthetic-audio tests, and full
+documentation (`docs/VOICE_MODEL.md`). See that doc for the one interface
+nuance this modality required (a mel-spectrogram stands in for the "image"
+`BaseEmbedder.extract_embedding()` expects) and `docs/DATASETS.md` for the
+VoxCeleb1-subset dataset note.
+
+## Phase 2 — Privacy layer
+
+**Status: implemented.**
+
+- `template_protection/hkdf_keys.py`: HKDF-SHA256 key derivation — per
+  (user, modality, application, key_version), three independent seeds never
+  stored in plaintext beside the protected template they produce.
+- `template_protection/transform.py` + `biohash.py`: the BioHashing-style
+  transform (keyed orthonormal random projection → keyed quantization →
+  keyed permutation) applied identically to all 3 modalities' embeddings —
+  see `docs/TEMPLATE_PROTECTION.md` for the full mathematical walkthrough.
+- `template_protection/matcher.py` (Hamming/cosine comparison,
+  accept/reject) and `revoke.py` (key rotation → a new, unlinkable
+  template).
+- FastAPI backend (`backend/`) + SQLite: `POST /enroll`, `POST /authenticate`,
+  `POST /verify/{face,iris,fingerprint}`, `POST /revoke-template`,
+  `GET /user/{id}`, `DELETE /user/{id}` — storing **only** protected
+  templates, never raw images or raw embeddings (see `docs/BACKEND_API.md`).
+- `evaluation/privacy_metrics.py`: Experiment 1 (protected vs. unprotected
+  similarity preservation), Experiment 2 (revocability), Experiment 3
+  (diversity), Experiment 4 (FAR/FRR/EER on protected templates).
+- `docs/PRIVACY_AND_SECURITY.md`'s Experiment 5 analysis (template leakage,
+  replay, key compromise, reconstruction risk, database compromise,
+  cross-application linkability) filled in — proportionate, non-overclaiming.
 
 ## Phase 3 — Fusion, dashboard, full evaluation
 

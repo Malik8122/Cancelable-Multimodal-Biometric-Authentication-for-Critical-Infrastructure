@@ -74,26 +74,28 @@ three modalities together — no modality is ever left behind.
 | Phase | Focus | Status |
 |---|---|---|
 | **1** | Preprocessing + recognition models for face/iris/fingerprint, individually evaluated | ✅ Implemented (this branch) |
-| **2** | Cancelable template protection, key management, backend + storage | 🔜 Next |
-| **3** | Multimodal fusion, React dashboard, full cross-modality evaluation | 🔜 After Phase 2 |
+| **2** | Cancelable template protection, key management, backend + storage | ✅ Implemented (this branch) |
+| **3** | Multimodal fusion, React dashboard, full cross-modality evaluation | 🔜 Next |
 
 ## Repository structure
 
 ```text
-backend/              FastAPI app (Phase 2+): api/, services/, database/
+backend/              FastAPI app: api/, services/, database/, auth/, config.py
 models/
   common/             BaseEmbedder interface + ArcFace training head
   face/ iris/ fingerprint/   inference.py + saved/ (Git-LFS-tracked checkpoints)
 preprocessing/         Modality-specific classical-CV preprocessing
 embeddings/            Preprocessing + model wired together behind one interface
-template_protection/   Cancelable transform, key management (Phase 2)
+template_protection/   Cancelable BioHashing transform, HKDF key management, matcher
 fusion/                Multimodal score fusion (Phase 3)
-evaluation/            Shared metrics (FAR/FRR/EER/ROC/AUC) + experiment runners
+evaluation/            Shared metrics (FAR/FRR/EER/ROC/AUC) + experiment runners,
+                       including privacy_metrics.py (protected-template experiments)
 frontend/              React dashboard (Phase 3)
 notebooks/             Colab notebooks: dataset download, fine-tuning, image testing
 kaggle_kernels/         Kaggle Kernel equivalents: unattended real-GPU training via the API
-scripts/                run_kaggle_kernels.py: push/monitor/pull all 3 Kaggle kernels
-docs/                  Architecture, datasets/licensing, privacy analysis, roadmap
+scripts/                run_kaggle_kernels.py: push/monitor/pull all 4 Kaggle kernels
+docs/                  Architecture, datasets/licensing, privacy analysis, roadmap,
+                       template protection + backend API reference
 tests/                 Offline tests against synthetic images (no GPU/dataset needed)
 ```
 
@@ -118,11 +120,39 @@ pip install -r requirements.txt
 
 No GPU, no dataset, no trained checkpoint required — these tests exercise the
 preprocessing → embedding interface with synthetic images and prove the
-pipeline is correctly wired for all three modalities:
+pipeline is correctly wired for all three modalities, plus the full
+`template_protection/` + `backend/` layer against synthetic embeddings and an
+in-memory database:
 
 ```bash
 pytest
 ```
+
+### Configure the backend environment
+
+The backend needs a `MASTER_SECRET` — the root secret every cancelable
+template's key is derived from (see `docs/TEMPLATE_PROTECTION.md`). There is
+no working default; the server refuses to start without one.
+
+```bash
+cp .env.example .env
+python -c "import secrets; print(secrets.token_hex(32))"   # paste the output into .env as MASTER_SECRET
+```
+
+`.env` is gitignored — never commit a real secret. `pytest` doesn't need this
+step; the test suite supplies its own obviously-fake secret via a fixture
+(`tests/conftest.py`).
+
+### Run the backend
+
+```bash
+uvicorn backend.main:app --reload
+```
+
+Then see `docs/BACKEND_API.md` for the full endpoint reference, or open
+`http://127.0.0.1:8000/docs` for interactive Swagger docs. By default this
+creates a local `biometric.db` SQLite file (gitignored) storing **only**
+protected templates — never raw images or raw embeddings.
 
 ### Train the models
 
@@ -178,8 +208,9 @@ system can still be developed and tested.
 | Face | InceptionResnetV1, pretrained on VGGFace2 (`facenet-pytorch`) | Strong pretrained embeddings, minimal fine-tuning needed |
 | Iris | ResNet18 (ImageNet) + projection head | No public pretrained iris-embedding model exists; small enough to fine-tune fast |
 | Fingerprint | ResNet50 (ImageNet) + projection head — **DeepPrint substitute** | DeepPrint has no public weights/implementation, impractical for this timeline; see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#model-decisions-and-why-phase-1) for the full justification |
+| Voice | ECAPA-TDNN (SpeechBrain), 192-dim embedding | Current state-of-the-art speaker-verification architecture, PyTorch-compatible, easy to fine-tune; see [`docs/VOICE_MODEL.md`](docs/VOICE_MODEL.md) |
 
-All three are fine-tuned with the same ArcFace angular-margin loss
+All four are fine-tuned with the same ArcFace angular-margin loss
 (`models/common/arcface.py`) for a consistent, comparable training recipe
 across modalities.
 
@@ -190,6 +221,7 @@ across modalities.
 | Face | [LFW](http://vis-www.cs.umass.edu/lfw/) | Auto-downloaded, no login |
 | Iris | CASIA-Iris-Thousand (or an equivalent licensed dataset) | **You must obtain a licensed copy yourself** — see [`docs/DATASETS.md`](docs/DATASETS.md) |
 | Fingerprint | [SOCOFing](https://www.kaggle.com/datasets/ruizgara/socofing) | Kaggle account required (free) |
+| Voice | [VoxCeleb1 subset (Indian celebrities)](https://www.kaggle.com/datasets/gaurav41/voxceleb1-audio-wav-files-for-india-celebrity) | Kaggle account required (free); see [`docs/DATASETS.md`](docs/DATASETS.md) for why this is a subset, not the full corpus |
 
 Full source/license/retention notes: [`docs/DATASETS.md`](docs/DATASETS.md).
 **No raw biometric image from any dataset is ever committed to this repo.**
@@ -198,15 +230,17 @@ Full source/license/retention notes: [`docs/DATASETS.md`](docs/DATASETS.md).
 
 - Raw biometric samples exist only for the duration of a preprocessing call —
   nothing persists them to disk.
-- The eventual database (Phase 2) stores **only** cancelable/protected
+- The database (`backend/database/`) stores **only** cancelable/protected
   templates, never raw images or raw embeddings.
-- Transformation keys are derived (HKDF), not stored plaintext beside the
-  templates they produced (Phase 2).
+- Transformation keys are derived via HKDF-SHA256
+  (`template_protection/hkdf_keys.py`), not stored plaintext beside the
+  templates they produced.
 - Revocability and cross-application diversity are experimentally
-  demonstrated, not just asserted (Phase 2 experiments).
+  demonstrated (`evaluation/privacy_metrics.py`), not just asserted.
 
-Full principles and current honest limitations:
-[`docs/PRIVACY_AND_SECURITY.md`](docs/PRIVACY_AND_SECURITY.md).
+Full principles, the BioHashing/HKDF design, and current honest limitations:
+[`docs/PRIVACY_AND_SECURITY.md`](docs/PRIVACY_AND_SECURITY.md) and
+[`docs/TEMPLATE_PROTECTION.md`](docs/TEMPLATE_PROTECTION.md).
 
 ## Limitations & honest scope
 
@@ -218,18 +252,26 @@ Full principles and current honest limitations:
   above) — an explicit, documented architecture swap, not a silent
   downgrade.
 - The iris dataset is license-gated; results depend on the specific dataset
-  the user supplies.
-- Phase 1 alone (this branch) has **no privacy layer yet** — `BaseEmbedder`
-  output is a plain embedding, not a protected credential. Do not treat
-  anything before Phase 2 lands as a working privacy guarantee.
+  the user supplies. No trained iris checkpoint is committed yet either —
+  `BaseEmbedder` falls back to a deterministic mock embedding for iris until
+  one is trained, so iris enrollment/authentication through the backend is
+  demonstrably wired end-to-end but not yet biometrically meaningful.
+- The cancelable transform's non-invertibility is an information-lossy
+  argument, not a cryptographic one-wayness proof — see
+  [`docs/TEMPLATE_PROTECTION.md`](docs/TEMPLATE_PROTECTION.md)'s "Security
+  assumptions and limitations" for exactly what is and isn't claimed.
+- There is no user/API-caller authentication (API keys, OAuth, sessions) —
+  every endpoint in `backend/` is reachable by anyone who can reach the
+  process; that's out of scope for this capstone's biometric-verification
+  focus, not an oversight (see `docs/BACKEND_API.md`).
 
 ## Team / contributor roles
 
 - **Member 1 — Face:** dataset, preprocessing, model, evaluation, `models/face/`.
 - **Member 2 — Iris:** dataset, preprocessing, model, evaluation, `models/iris/`.
 - **Member 3 — Fingerprint + integration/privacy:** dataset, preprocessing,
-  model, evaluation, `models/fingerprint/`, plus the template-protection
-  architecture and backend integration planning.
+  model, evaluation, `models/fingerprint/`, plus the `template_protection/`
+  cancelable-transform implementation and the `backend/` FastAPI integration.
 
 All three modalities share the `BaseEmbedder` interface
 (`models/common/base_embedder.py`) precisely so this split can happen without
