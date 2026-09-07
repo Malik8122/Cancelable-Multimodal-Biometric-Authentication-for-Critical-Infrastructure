@@ -10,6 +10,7 @@ kaggle_kernels/
   face_training/            kernel-metadata.json + face-embedding-training.ipynb
   iris_training/             kernel-metadata.json + iris-embedding-training.ipynb
   fingerprint_training/       kernel-metadata.json + fingerprint-embedding-training.ipynb
+  voice_training/             kernel-metadata.json + voice-embedding-training.ipynb
 ```
 
 ## One-time setup
@@ -45,9 +46,10 @@ fields here already include the `-phase-1` suffix Kaggle would otherwise add
 automatically (avoids the "kernel title does not resolve to the specified
 id" mismatch warning).
 
-Repeat for `iris_training` and `fingerprint_training`. `scripts/run_kaggle_kernels.py`
-automates all three: push → poll → pull → copy the resulting `.pt`/`.h5`
-checkpoints into `models/<modality>/saved/` in this repo.
+Repeat for `iris_training`, `fingerprint_training`, and `voice_training`.
+`scripts/run_kaggle_kernels.py` automates all four: push → poll → pull →
+copy the resulting `.pt`/`.h5` checkpoints into `models/<modality>/saved/`
+in this repo.
 
 ## Notes specific to each kernel
 
@@ -62,3 +64,10 @@ checkpoints into `models/<modality>/saved/` in this repo.
   label, so it's robust to whatever subject/eye folder depth this mirror
   actually uses.
 - **Fingerprint:** attaches `ruizgara/socofing` directly, no manual download.
+- **Voice:** attaches `gaurav41/voxceleb1-audio-wav-files-for-india-celebrity` -
+  a real-audio subset of VoxCeleb1 (Indian-celebrity speakers, DbCL-1.0
+  licensed), not the full VoxCeleb1 corpus. Its files are nested under
+  `vox1_indian/content/vox_indian/<speaker_id>/...` inside the dataset mount;
+  the notebook's `DATASET_ROOT` already points at that nested path. See
+  `docs/DATASETS.md`'s Voice section and `docs/VOICE_MODEL.md` for why a
+  subset was used and what that means for reported metrics.

@@ -14,11 +14,13 @@ import pytest
 from models.face.inference import FACE_EMBEDDING_DIM, FaceEmbedder
 from models.fingerprint.inference import FINGERPRINT_EMBEDDING_DIM, FingerprintEmbedder
 from models.iris.inference import IRIS_EMBEDDING_DIM, IrisEmbedder
+from models.voice.inference import VOICE_EMBEDDING_DIM, VoiceEmbedder
 
 EMBEDDER_CASES = [
     (FaceEmbedder, FACE_EMBEDDING_DIM),
     (IrisEmbedder, IRIS_EMBEDDING_DIM),
     (FingerprintEmbedder, FINGERPRINT_EMBEDDING_DIM),
+    (VoiceEmbedder, VOICE_EMBEDDING_DIM),
 ]
 
 

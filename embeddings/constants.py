@@ -13,4 +13,5 @@ DEFAULT_CHECKPOINTS = {
     "face": _MODELS_ROOT / "face" / "saved" / "face_embedder.pt",
     "iris": _MODELS_ROOT / "iris" / "saved" / "iris_embedder.pt",
     "fingerprint": _MODELS_ROOT / "fingerprint" / "saved" / "fingerprint_embedder.pt",
+    "voice": _MODELS_ROOT / "voice" / "saved" / "voice_embedder.pt",
 }

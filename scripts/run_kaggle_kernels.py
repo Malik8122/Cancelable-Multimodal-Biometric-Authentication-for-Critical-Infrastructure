@@ -56,6 +56,7 @@ MODALITIES = {
     "face": ("face_training", "face-embedding-training-phase-1"),
     "iris": ("iris_training", "iris-embedding-training-phase-1"),
     "fingerprint": ("fingerprint_training", "fingerprint-embedding-training-phase-1"),
+    "voice": ("voice_training", "voice-embedding-training-phase-1-extension"),
 }
 
 

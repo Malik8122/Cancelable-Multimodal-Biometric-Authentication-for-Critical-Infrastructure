@@ -16,9 +16,11 @@ from embeddings.constants import DEFAULT_CHECKPOINTS
 from models.face.inference import FaceEmbedder
 from models.fingerprint.inference import FingerprintEmbedder
 from models.iris.inference import IrisEmbedder
+from models.voice.inference import VoiceEmbedder
 from preprocessing.face import FacePreprocessor
 from preprocessing.fingerprint import FingerprintPreprocessor
 from preprocessing.iris import IrisPreprocessor
+from preprocessing.voice import TARGET_SAMPLE_RATE, VoicePreprocessor
 
 
 class ModalityPipeline:
@@ -56,3 +58,21 @@ class IrisPipeline(ModalityPipeline):
 class FingerprintPipeline(ModalityPipeline):
     def __init__(self, checkpoint_path: str | Path | None = DEFAULT_CHECKPOINTS["fingerprint"], device: str = "cpu"):
         super().__init__(FingerprintPreprocessor(), FingerprintEmbedder(checkpoint_path=checkpoint_path, device=device))
+
+
+class VoicePipeline(ModalityPipeline):
+    """Like the pipelines above, but audio needs one extra piece of
+    information the base class's single-argument `embed(raw_image)` doesn't
+    carry: the input's sample rate (a raw waveform alone doesn't say whether
+    it's 16kHz or 44.1kHz). `embed()` is overridden accordingly; the
+    constructor shape, `embedding_dim`, and `is_mock` are unchanged.
+    """
+
+    def __init__(self, checkpoint_path: str | Path | None = DEFAULT_CHECKPOINTS["voice"], device: str = "cpu"):
+        super().__init__(VoicePreprocessor(), VoiceEmbedder(checkpoint_path=checkpoint_path, device=device))
+
+    def embed(self, raw_audio: np.ndarray, sample_rate: int = TARGET_SAMPLE_RATE) -> np.ndarray:
+        processed = self._preprocessor.preprocess(raw_audio, sample_rate=sample_rate, training=False)
+        if processed.ndim == 2:
+            processed = np.stack([processed] * 3, axis=-1)
+        return self._embedder.extract_embedding(processed)

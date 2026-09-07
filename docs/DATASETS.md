@@ -48,6 +48,32 @@ preprocessing and training, per the privacy-by-design principle in
   altered variants (obliteration, central rotation, z-cut) not used in Phase 1.
 - **Retention:** same as Face — never committed to the repo.
 
+## Voice — VoxCeleb1 (subset)
+
+- **Source used:** [gaurav41/voxceleb1-audio-wav-files-for-india-celebrity](https://www.kaggle.com/datasets/gaurav41/voxceleb1-audio-wav-files-for-india-celebrity)
+  on Kaggle, attached natively in `kaggle_kernels/voice_training/kernel-metadata.json`
+  (no manual download, no Kaggle API token needed inside the kernel).
+- **What it actually is:** a real-audio **subset** of VoxCeleb1 (Indian-celebrity
+  speakers only), not the full ~1,251-speaker VoxCeleb1 corpus. The official
+  full corpus ([robots.ox.ac.uk/~vgg/data/voxceleb](https://www.robots.ox.ac.uk/~vgg/data/voxceleb/vox1.html))
+  is tens of GB split across many part-files and impractical to download
+  unattended inside a single Kaggle kernel session within this capstone's
+  scope — the same kind of scope reduction already documented for Fingerprint
+  (ResNet50-for-DeepPrint) and Iris (mirror dataset) elsewhere in this file.
+  Exact speaker/utterance/split counts are **not hardcoded here** — they
+  depend on exactly what this subset contains and are printed at kernel
+  run time by `kaggle_kernels/voice_training/voice-embedding-training.ipynb`'s
+  dataset cell (see `docs/VOICE_MODEL.md`).
+- **License:** DbCL-1.0 (Database Contents License), as declared by the
+  dataset's Kaggle listing. This is a derived subset of VoxCeleb1's audio,
+  not an independently-verified redistribution grant from VoxCeleb1's
+  original maintainers (University of Oxford VGG) — noted explicitly per
+  this project's "do not assume datasets can be freely redistributed"
+  principle, the same honesty standard applied to Iris's CASIA mirror above.
+- **Retention:** same as every other modality — raw audio only ever exists
+  locally / in the Kaggle runtime during preprocessing and training; never
+  committed to this repository.
+
 ## General policy
 
 - No raw biometric image, of any modality, from any dataset, is ever committed
