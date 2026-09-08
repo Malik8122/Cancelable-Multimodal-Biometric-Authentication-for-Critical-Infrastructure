@@ -31,12 +31,18 @@ def train(
     dataset_root: str | Path,
     output_dir: str | Path,
     config: VoiceConfig | None = None,
+    device: str | None = None,
 ) -> Path:
     """Fine-tune the voice embedding backbone; returns the best checkpoint's path.
 
     Saves `voice_embedder_best.pt`/`voice_embedder_last.pt` during training,
     then the canonical `voice_embedder.pt` (+ `.h5`) at the end - same shape
     as the fingerprint Kaggle kernel's checkpoint-saving cell.
+
+    `device` defaults to `detect_device()` (which itself smoke-tests CUDA,
+    not just checks availability) but can be overridden explicitly - e.g. by
+    a caller that already ran its own device check and wants to reuse it
+    rather than re-running the smoke test.
     """
     import torch
     from torch.optim import AdamW
@@ -44,7 +50,7 @@ def train(
     from torch.utils.data import DataLoader
 
     config = config or VoiceConfig()
-    device = detect_device()
+    device = device or detect_device()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,7 +68,7 @@ def train(
         weight_decay=config.weight_decay,
     )
     scheduler = CosineAnnealingLR(optimizer, T_max=config.num_epochs)
-    scaler = torch.cuda.amp.GradScaler(enabled=config.mixed_precision and device == "cuda")
+    scaler = torch.amp.GradScaler(device, enabled=config.mixed_precision and device == "cuda")
     criterion = torch.nn.CrossEntropyLoss()
 
     best_val_loss = float("inf")
