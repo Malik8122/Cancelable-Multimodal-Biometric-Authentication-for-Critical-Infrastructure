@@ -1,7 +1,8 @@
 """Voice-specific evaluation report, built on the same shared primitives
 every other modality's evaluation already uses (evaluation/metrics.py,
-evaluation/roc.py) plus the classification metrics (precision/recall/F1/
-confusion matrix) the spec asks for that those two don't already cover.
+evaluation/roc.py), including `precision_recall_f1`/`confusion_matrix_at_threshold`
+(shared with `evaluation/fingerprint_metrics.py` - moved to `evaluation/metrics.py`
+during the fingerprint accuracy upgrade so there's exactly one implementation).
 
 Mirrors evaluation/experiments.py::run_modality_experiment's shape and
 extends it - same genuine/impostor cosine-similarity scoring, plus the
@@ -15,31 +16,10 @@ import csv
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import confusion_matrix as sklearn_confusion_matrix
 
 from evaluation.experiments import build_genuine_impostor_scores
-from evaluation.metrics import accuracy_at_threshold, compute_eer, compute_far_frr
+from evaluation.metrics import accuracy_at_threshold, compute_eer, compute_far_frr, confusion_matrix_at_threshold, precision_recall_f1
 from evaluation.roc import compute_roc
-
-
-def precision_recall_f1(genuine_scores: np.ndarray, impostor_scores: np.ndarray, threshold: float) -> dict:
-    """Precision/recall/F1 treating "genuine" as the positive class at `threshold`."""
-    true_positive = int(np.sum(genuine_scores >= threshold))
-    false_negative = int(np.sum(genuine_scores < threshold))
-    false_positive = int(np.sum(impostor_scores >= threshold))
-
-    precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) else 0.0
-    recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-
-    return {"precision": precision, "recall": recall, "f1": f1}
-
-
-def voice_confusion_matrix(genuine_scores: np.ndarray, impostor_scores: np.ndarray, threshold: float) -> np.ndarray:
-    """2x2 confusion matrix (rows/cols: [impostor, genuine]) at `threshold`."""
-    y_true = np.concatenate([np.zeros_like(impostor_scores), np.ones_like(genuine_scores)])
-    y_pred = np.concatenate([impostor_scores, genuine_scores]) >= threshold
-    return sklearn_confusion_matrix(y_true, y_pred.astype(int), labels=[0, 1])
 
 
 def run_voice_experiment(embeddings: list[np.ndarray], labels: list[str]) -> dict:
@@ -61,7 +41,7 @@ def run_voice_experiment(embeddings: list[np.ndarray], labels: list[str]) -> dic
     far, frr = compute_far_frr(genuine_scores, impostor_scores, eer_threshold)
     prf1 = precision_recall_f1(genuine_scores, impostor_scores, eer_threshold)
     roc = compute_roc(genuine_scores, impostor_scores)
-    confusion = voice_confusion_matrix(genuine_scores, impostor_scores, eer_threshold)
+    confusion = confusion_matrix_at_threshold(genuine_scores, impostor_scores, eer_threshold)
 
     return {
         "modality": "voice",

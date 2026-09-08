@@ -31,13 +31,25 @@ def test_iris_preprocessing_raises_on_uninformative_image():
         IrisPreprocessor().preprocess(flat_image)
 
 
-def test_fingerprint_preprocessing_produces_expected_shape(synthetic_fingerprint_image):
+def test_fingerprint_enhance_produces_expected_shape(synthetic_fingerprint_image):
+    """`enhance()` is the pre-ImageNet-normalization stage - see
+    tests/test_fingerprint_preprocessing.py for the fuller pipeline coverage
+    added alongside the fingerprint accuracy upgrade."""
     from preprocessing.fingerprint import FINGERPRINT_INPUT_SIZE, FingerprintPreprocessor
 
-    enhanced = FingerprintPreprocessor().preprocess(synthetic_fingerprint_image)
+    enhanced = FingerprintPreprocessor().enhance(synthetic_fingerprint_image)
 
     assert enhanced.shape == (FINGERPRINT_INPUT_SIZE, FINGERPRINT_INPUT_SIZE, 3)
     assert enhanced.dtype == np.uint8
+
+
+def test_fingerprint_preprocess_produces_imagenet_normalized_float(synthetic_fingerprint_image):
+    from preprocessing.fingerprint import FINGERPRINT_INPUT_SIZE, FingerprintPreprocessor
+
+    preprocessed = FingerprintPreprocessor().preprocess(synthetic_fingerprint_image)
+
+    assert preprocessed.shape == (FINGERPRINT_INPUT_SIZE, FINGERPRINT_INPUT_SIZE, 3)
+    assert preprocessed.dtype == np.float32
 
 
 def test_face_preprocessing_requires_facenet_pytorch_and_detects_no_face_on_noise(random_rgb_image):

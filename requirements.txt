@@ -38,3 +38,7 @@ python-multipart>=0.0.9
 torchaudio>=2.2
 speechbrain>=1.0
 webrtcvad>=2.0.10
+
+# --- Fingerprint accuracy upgrade (SOCOFing + ArcFace) - training-time
+# augmentation only; preprocessing/fingerprint.py itself needs no extra deps. ---
+albumentations>=1.4

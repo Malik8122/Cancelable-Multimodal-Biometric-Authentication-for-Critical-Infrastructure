@@ -8,6 +8,7 @@ and fusion performance).
 from __future__ import annotations
 
 import numpy as np
+from sklearn.metrics import confusion_matrix as _sklearn_confusion_matrix
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -57,3 +58,28 @@ def accuracy_at_threshold(
     correct = np.sum(genuine_scores >= threshold) + np.sum(impostor_scores < threshold)
     total = len(genuine_scores) + len(impostor_scores)
     return float(correct / total) if total else 0.0
+
+
+def precision_recall_f1(genuine_scores: np.ndarray, impostor_scores: np.ndarray, threshold: float) -> dict:
+    """Precision/recall/F1 treating "genuine" as the positive class at `threshold`.
+
+    Shared by every modality's verification-style evaluation
+    (`evaluation/voice_metrics.py`, `evaluation/fingerprint_metrics.py`) so
+    there's exactly one implementation, not one per modality.
+    """
+    true_positive = int(np.sum(genuine_scores >= threshold))
+    false_negative = int(np.sum(genuine_scores < threshold))
+    false_positive = int(np.sum(impostor_scores >= threshold))
+
+    precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) else 0.0
+    recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
+def confusion_matrix_at_threshold(genuine_scores: np.ndarray, impostor_scores: np.ndarray, threshold: float) -> np.ndarray:
+    """2x2 confusion matrix (rows/cols: [impostor, genuine]) at `threshold`."""
+    y_true = np.concatenate([np.zeros_like(impostor_scores), np.ones_like(genuine_scores)])
+    y_pred = np.concatenate([impostor_scores, genuine_scores]) >= threshold
+    return _sklearn_confusion_matrix(y_true, y_pred.astype(int), labels=[0, 1])
