@@ -66,8 +66,12 @@ in this repo.
 - **Fingerprint:** attaches `ruizgara/socofing` directly, no manual download.
 - **Voice:** attaches `gaurav41/voxceleb1-audio-wav-files-for-india-celebrity` -
   a real-audio subset of VoxCeleb1 (Indian-celebrity speakers, DbCL-1.0
-  licensed), not the full VoxCeleb1 corpus. Its files are nested under
-  `vox1_indian/content/vox_indian/<speaker_id>/...` inside the dataset mount;
-  the notebook's `DATASET_ROOT` already points at that nested path. See
-  `docs/DATASETS.md`'s Voice section and `docs/VOICE_MODEL.md` for why a
-  subset was used and what that means for reported metrics.
+  licensed), not the full VoxCeleb1 corpus. The notebook auto-discovers
+  `DATASET_ROOT` by searching for the mounted directory whose immediate
+  children are `idNNNNN` speaker folders, rather than assuming one fixed
+  nesting depth under `/kaggle/input/` - an earlier version hardcoded
+  `vox1_indian/content/vox_indian/`, which turned out not to match this
+  dataset's actual mount layout on a real run (only its *listed* file paths,
+  not necessarily its mount structure). See `docs/DATASETS.md`'s Voice
+  section and `docs/VOICE_MODEL.md` for why a subset was used and what that
+  means for reported metrics.
