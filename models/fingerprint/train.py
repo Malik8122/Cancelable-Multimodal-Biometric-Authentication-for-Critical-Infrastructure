@@ -167,7 +167,24 @@ def train(
             scaler.update()
 
             train_loss_sum += loss.item() * batch.size(0)
-            train_correct += (logits.argmax(1) == labels).sum().item()
+            # Accuracy is measured on the *plain* cosine similarity to each
+            # class's (normalized) ArcFace weight vector, not on `logits`
+            # directly. `logits` has ArcFace's margin subtracted from the
+            # true class's angle before scaling - with margin=0.5/scale=64,
+            # empirically confirmed on real embeddings that even a
+            # moderately (not yet near-perfectly) separated embedding gets
+            # zero argmax accuracy on that margin-shifted logit, staying at
+            # 0.0 for many epochs regardless of real, ongoing improvement.
+            # This makes plain `logits.argmax()` accuracy useless as a
+            # training-progress signal until convergence is nearly complete,
+            # so it is not what gets reported (the loss itself still trains
+            # correctly on the margin-shifted logits - only this metric's
+            # *reporting* basis changes).
+            with torch.no_grad():
+                cosine_similarities = torch.nn.functional.linear(
+                    torch.nn.functional.normalize(embeddings), torch.nn.functional.normalize(arc_head.weight)
+                )
+                train_correct += (cosine_similarities.argmax(1) == labels).sum().item()
             train_total += batch.size(0)
 
         scheduler.step()
@@ -207,7 +224,14 @@ def train(
             torch.save(model.state_dict(), best_checkpoint_path)
         else:
             epochs_without_improvement += 1
-            if epochs_without_improvement >= config.early_stopping_patience:
+            # Never stop before `min_epochs_before_early_stopping` - see that
+            # field's docstring in config.py for why a short patience window
+            # starting from a cold-start ArcFace head can trigger before the
+            # model has had any real chance to learn.
+            if (
+                epoch >= config.min_epochs_before_early_stopping
+                and epochs_without_improvement >= config.early_stopping_patience
+            ):
                 logger.info("Early stopping at epoch=%d (best_val_eer=%.4f)", epoch, best_eer)
                 break
 

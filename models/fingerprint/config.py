@@ -53,7 +53,18 @@ class FingerprintConfig:
     samples_per_identity: int = 4
 
     # --- Early stopping (on validation EER, not loss) ---
-    early_stopping_patience: int = 5
+    #: Epochs to wait, after `min_epochs_before_early_stopping`, without a
+    #: new best (lowest) validation EER before stopping.
+    early_stopping_patience: int = 8
+    #: Early stopping is not evaluated at all before this epoch. A fresh
+    #: ArcFace head (margin=0.5, scale=64) plus several newly-unfrozen
+    #: ResNet50 layers starts at a near-random validation EER that a short
+    #: `patience` window can mistake for "not improving" before the model
+    #: has had any real chance to learn - observed directly on a real Kaggle
+    #: run, where `patience=5` (with no minimum) stopped training after only
+    #: 6 epochs (3 of them still inside `warmup_epochs`) with validation EER
+    #: stuck at its initial ~0.42 baseline the whole time.
+    min_epochs_before_early_stopping: int = 10
 
     # --- Dataset split (models/fingerprint/dataset.py) ---
     train_val_test_split: tuple[float, float, float] = (0.70, 0.15, 0.15)
