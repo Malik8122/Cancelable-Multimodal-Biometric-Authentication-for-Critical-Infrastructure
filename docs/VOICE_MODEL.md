@@ -78,14 +78,47 @@ single Kaggle kernel session — see `docs/DATASETS.md`'s Voice section for
 the full licensing/scope note). Number of speakers, utterance counts, and
 the resulting train/val/test split are **not hardcoded** — they're printed
 at run time by `kaggle_kernels/voice_training/voice-embedding-training.ipynb`'s
-dataset cell from whatever the attached copy actually contains, and recorded
-here once a real training run has completed:
+dataset cell from whatever the attached copy actually contains. From the
+real Kaggle GPU-kernel run that produced the committed checkpoint:
 
 | Metric | Value |
 |---|---|
-| Speakers | _filled in after training — see the Kaggle kernel's output_ |
-| Total utterances | _filled in after training_ |
-| Train / Val / Test | 70% / 15% / 15% per speaker (see below) |
+| Speakers | 24 |
+| Total utterances | 4,857 |
+| Train / Val / Test | 3,389 / 717 / 751 (70% / 15% / 15% per speaker) |
+
+## Real training results
+
+From the same run (`kaggle_kernels/voice_training/`, CPU — see "A note on GPU
+compatibility" below), evaluated on the 751-utterance held-out test set via
+`evaluation/voice_metrics.py::run_voice_experiment`:
+
+| Metric | Value |
+|---|---|
+| EER | 2.29% |
+| Accuracy (at EER threshold) | 97.71% |
+| AUC | 0.9967 |
+| Precision | 67.57% |
+| Recall | 97.71% |
+| F1 | 79.89% |
+| Genuine-pair cosine similarity (sample) | 0.895 |
+| Impostor-pair cosine similarity (sample) | 0.132 |
+
+Precision is lower than the other metrics because this evaluation counts
+every genuine/impostor *pair* among the 751 test utterances (13,101 genuine
+pairs vs. 268,524 impostor pairs — impostor pairs vastly outnumber genuine
+ones for a 24-speaker test set), not because the model performs poorly; EER
+and AUC are the metrics that matter for verification quality and both are
+strong for a from-scratch fine-tune on a 24-speaker subset.
+
+### A note on GPU compatibility
+
+The Kaggle free-tier GPU (Tesla P100, compute capability 6.0) available for
+this run was **not supported** by the preinstalled PyTorch build (which only
+supports compute capability 7.0+) — `models/voice/utils.py::detect_device()`
+smoke-tests CUDA with a real op and falls back to CPU rather than crashing
+mid-training when this happens, which is what training actually ran on.
+Training completed in full (all 30 epochs) in a little under 8 hours on CPU.
 
 **Split methodology:** per-identity 70/15/15 (`models/voice/dataset.py::VoxCelebDataset`),
 the same simplification `notebooks/03_fingerprint_training_and_testing.ipynb`

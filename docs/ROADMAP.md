@@ -27,7 +27,9 @@ further along than the others.
 
 ### Voice — 4th modality (added alongside Phase 1's foundation)
 
-**Status: implemented (pipeline); checkpoint training in progress.**
+**Status: implemented, checkpoint trained.** Real Kaggle GPU-kernel run (CPU
+fallback — see `docs/VOICE_MODEL.md`): 24 speakers, 4,857 utterances, 2.29%
+EER / 97.71% accuracy / 0.9967 AUC on the held-out test set.
 
 Speaker verification via ECAPA-TDNN, added to the same standard as Face/Iris/
 Fingerprint: `preprocessing/voice.py`, `models/voice/`, a Colab notebook
