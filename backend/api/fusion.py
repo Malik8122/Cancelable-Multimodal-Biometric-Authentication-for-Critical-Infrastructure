@@ -21,7 +21,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import FusionAuthenticateResponse, ModalityAuthenticationResult
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_biometric_sample
+from backend.utils import call_modality_service, decode_biometric_sample
 from fusion.score_fusion import fuse_scores
 
 logger = logging.getLogger("backend.api.fusion")
@@ -62,17 +62,12 @@ def authenticate_fusion(
     for modality, upload in provided.items():
         raw_input = decode_biometric_sample(modality, upload, settings)
         service = get_service_for_modality(modality)
-        try:
-            result = service.authenticate(db, raw_input, user_id=user_id, application_id=resolved_application_id)
-        except ValueError as error:
-            # E.g. face's real preprocessing (MTCNN) raising "no face
-            # detected" - a genuinely bad sample, not a server error. A
-            # multi-modality request fails closed as a whole rather than
-            # silently fusing on incomplete/undefined per-modality results.
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Could not process the {modality} sample: {error}",
-            ) from error
+        # A multi-modality request fails closed as a whole (422 naming the
+        # bad modality) rather than silently fusing on an incomplete result
+        # - see backend/utils.py::call_modality_service.
+        result = call_modality_service(
+            service.authenticate, modality, db, raw_input, user_id=user_id, application_id=resolved_application_id
+        )
         per_modality_results[modality] = ModalityAuthenticationResult(
             score=result.score, threshold=result.threshold, authenticated=result.authenticated
         )

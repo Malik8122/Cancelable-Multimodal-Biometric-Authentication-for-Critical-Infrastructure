@@ -18,7 +18,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import EnrollResponse
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_biometric_sample
+from backend.utils import call_modality_service, decode_biometric_sample
 
 logger = logging.getLogger("backend.api.enroll")
 
@@ -42,7 +42,9 @@ def enroll(
     if service.pipeline.is_mock:
         logger.warning("Enrolling user_id=%s modality=%s against a MOCK embedding - not biometrically meaningful", user_id, modality)
 
-    template = service.enroll(db, raw_image, user_id=user_id, application_id=resolved_application_id)
+    template = call_modality_service(
+        service.enroll, modality, db, raw_image, user_id=user_id, application_id=resolved_application_id
+    )
     logger.info("Enrolled user_id=%s modality=%s key_version=%d", user_id, modality, template.key_version)
 
     return EnrollResponse(

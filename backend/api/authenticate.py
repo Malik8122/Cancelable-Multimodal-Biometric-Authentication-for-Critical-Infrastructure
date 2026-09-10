@@ -11,7 +11,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import AuthenticateResponse
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_biometric_sample
+from backend.utils import call_modality_service, decode_biometric_sample
 
 logger = logging.getLogger("backend.api.authenticate")
 
@@ -32,7 +32,9 @@ def authenticate(
     resolved_application_id = application_id or settings.application_id
     service = get_service_for_modality(modality)
 
-    result = service.authenticate(db, raw_image, user_id=user_id, application_id=resolved_application_id)
+    result = call_modality_service(
+        service.authenticate, modality, db, raw_image, user_id=user_id, application_id=resolved_application_id
+    )
     logger.info("Authenticate user_id=%s modality=%s authenticated=%s", user_id, modality, result.authenticated)
 
     return AuthenticateResponse(

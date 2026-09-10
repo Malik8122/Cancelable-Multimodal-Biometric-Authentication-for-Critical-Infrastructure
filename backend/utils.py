@@ -64,6 +64,26 @@ def decode_image(contents: bytes) -> np.ndarray:
     return cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
 
 
+def call_modality_service(operation, modality: str, *args, **kwargs):
+    """Run a `ModalityService.enroll/authenticate/revoke` call, converting a
+    real preprocessing failure into a clean 422 instead of an unhandled 500.
+
+    E.g. face's real detector (MTCNN, via facenet-pytorch) raises
+    `ValueError("No face detected in the provided image.")` for a sample
+    with no detectable face - a genuinely bad biometric sample, not a server
+    error, so every route that reaches a `ModalityService` method goes
+    through this one place rather than each re-implementing the same
+    try/except.
+    """
+    try:
+        return operation(*args, **kwargs)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not process the {modality} sample: {error}",
+        ) from error
+
+
 def decode_biometric_sample(modality: str, file: UploadFile, settings: Settings):
     """Read, validate, and decode one uploaded biometric sample for `modality`.
 

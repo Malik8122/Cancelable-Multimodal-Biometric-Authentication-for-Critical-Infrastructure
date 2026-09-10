@@ -202,3 +202,14 @@ def test_enroll_rejects_oversized_upload(tmp_path, monkeypatch, synthetic_eye_im
 def test_enroll_rejects_unsupported_modality(client, synthetic_eye_image):
     response = _enroll(client, _encode_png(synthetic_eye_image), modality="retina")
     assert response.status_code == 422
+
+
+def test_enroll_rejects_an_undetectable_face_sample_with_a_clean_422(client, random_rgb_image):
+    """Real face preprocessing (MTCNN) raises ValueError("No face detected...")
+    for a sample with no detectable face - backend/utils.py::call_modality_service
+    must turn that into a clean 422, not an unhandled 500."""
+    pytest.importorskip("facenet_pytorch", reason="facenet-pytorch not installed in this environment")
+
+    response = _enroll(client, _encode_png(random_rgb_image), modality="face")
+    assert response.status_code == 422
+    assert "face" in response.json()["detail"]

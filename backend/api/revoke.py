@@ -21,7 +21,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import RevokeResponse
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_image, validate_upload
+from backend.utils import call_modality_service, decode_image, validate_upload
 
 logger = logging.getLogger("backend.api.revoke")
 
@@ -44,7 +44,9 @@ def revoke_template_endpoint(
     resolved_application_id = application_id or settings.application_id
     service = get_service_for_modality(modality)
 
-    revocation = service.revoke(db, raw_image, user_id=user_id, application_id=resolved_application_id)
+    revocation = call_modality_service(
+        service.revoke, modality, db, raw_image, user_id=user_id, application_id=resolved_application_id
+    )
     logger.info(
         "Revoked user_id=%s modality=%s old_key_version=%d new_key_version=%d",
         user_id, modality, revocation.old_key_version, revocation.new_key_version,
