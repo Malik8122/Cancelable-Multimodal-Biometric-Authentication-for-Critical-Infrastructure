@@ -1,0 +1,68 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+
+  --color-void: #05070a;
+  --color-panel: #0b0f16;
+  --color-panel-raised: #11161f;
+  --color-border: #1e2733;
+  --color-border-bright: #2c3948;
+
+  --color-text: #dbe4ee;
+  --color-text-muted: #7f8ea3;
+  --color-text-dim: #4b5768;
+
+  --color-accent: #22d3ee;
+  --color-accent-dim: #0e7490;
+  --color-success: #34d399;
+  --color-success-dim: #047857;
+  --color-danger: #f87171;
+  --color-danger-dim: #b91c1c;
+  --color-warning: #fbbf24;
+  --color-warning-dim: #92400e;
+
+  --animate-scan: scan 2.4s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+  @keyframes scan {
+    0% {
+      transform: translateY(-100%);
+    }
+    100% {
+      transform: translateY(100%);
+    }
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.9);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(1.6);
+      opacity: 0;
+    }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+* {
+  scrollbar-color: var(--color-border-bright) var(--color-void);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
