@@ -35,34 +35,41 @@ def _get_fingerprint_service():
     return get_fingerprint_service()
 
 
-def test_enroll_then_authenticate_with_the_same_image_succeeds(db_session, random_rgb_image):
-    service = _get_face_service()
+def test_enroll_then_authenticate_with_the_same_image_succeeds(db_session, synthetic_fingerprint_image):
+    # Uses fingerprint (not face) as the real-checkpoint modality here: face's
+    # real preprocessing (MTCNN via facenet-pytorch) correctly rejects any
+    # synthetic image as "no face detected" (see
+    # tests/test_preprocessing.py::test_face_preprocessing_requires_facenet_pytorch_and_detects_no_face_on_noise),
+    # so it can't exercise a real enroll/authenticate roundtrip offline.
+    service = _get_fingerprint_service()
 
-    enrolled = service.enroll(db_session, random_rgb_image, user_id="U001", application_id=APPLICATION_ID)
-    assert enrolled.modality == "face"
+    enrolled = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
+    assert enrolled.modality == "fingerprint"
     assert enrolled.key_version == 1
     assert enrolled.is_active is True
 
-    result = service.authenticate(db_session, random_rgb_image, user_id="U001", application_id=APPLICATION_ID)
+    result = service.authenticate(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     assert result.authenticated is True
     assert result.score >= result.threshold
 
 
-def test_authenticate_without_enrollment_fails_closed(db_session, random_rgb_image):
-    service = _get_face_service()
-    result = service.authenticate(db_session, random_rgb_image, user_id="never-enrolled", application_id=APPLICATION_ID)
+def test_authenticate_without_enrollment_fails_closed(db_session, synthetic_fingerprint_image):
+    service = _get_fingerprint_service()
+    result = service.authenticate(
+        db_session, synthetic_fingerprint_image, user_id="never-enrolled", application_id=APPLICATION_ID
+    )
     assert result.authenticated is False
     assert result.score == 0.0
 
 
-def test_revoke_bumps_key_version_and_regenerates_the_template(db_session, random_rgb_image):
+def test_revoke_bumps_key_version_and_regenerates_the_template(db_session, synthetic_fingerprint_image):
     from backend.database import crud
 
-    service = _get_face_service()
-    original = service.enroll(db_session, random_rgb_image, user_id="U001", application_id=APPLICATION_ID)
+    service = _get_fingerprint_service()
+    original = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     original_bytes = original.protected_template
 
-    revocation = service.revoke(db_session, random_rgb_image, user_id="U001", application_id=APPLICATION_ID)
+    revocation = service.revoke(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     assert revocation.old_key_version == 1
     assert revocation.new_key_version == 2
     assert revocation.template.key_version == 2
@@ -73,13 +80,13 @@ def test_revoke_bumps_key_version_and_regenerates_the_template(db_session, rando
     assert revocation.template.protected_template != original_bytes
 
     # The old (key_version=1) row is no longer the active one.
-    active = crud.get_active_template(db_session, "U001", "face", APPLICATION_ID)
+    active = crud.get_active_template(db_session, "U001", "fingerprint", APPLICATION_ID)
     assert active.key_version == 2
     assert active.template_id == revocation.template.template_id
 
     # Authenticating again re-derives the key from the *current*
     # (post-rotation) key_version, so the same biometric still authenticates.
-    result = service.authenticate(db_session, random_rgb_image, user_id="U001", application_id=APPLICATION_ID)
+    result = service.authenticate(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     assert result.authenticated is True
 
 

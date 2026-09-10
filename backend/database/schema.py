@@ -29,6 +29,23 @@ class AuthenticateResponse(BaseModel):
     authenticated: bool
 
 
+class ModalityAuthenticationResult(BaseModel):
+    """One modality's contribution to a `POST /authenticate/fusion` response."""
+
+    score: float
+    threshold: float
+    authenticated: bool
+
+
+class FusionAuthenticateResponse(BaseModel):
+    user_id: str
+    modalities_used: list[str]
+    results: dict[str, ModalityAuthenticationResult]
+    fused_score: float
+    fusion_threshold: float
+    authenticated: bool
+
+
 class RevokeRequest(BaseModel):
     user_id: str
     modality: str

@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.api import authenticate, enroll, revoke, user, verify
+from backend.api import authenticate, enroll, fusion, metrics, revoke, user, verify
 from backend.database.crud import ConcurrentEnrollmentError
 from backend.database.session import init_db
 
@@ -75,9 +75,11 @@ app.add_middleware(
 
 app.include_router(enroll.router, tags=["enrollment"])
 app.include_router(authenticate.router, tags=["authentication"])
+app.include_router(fusion.router, tags=["authentication"])
 app.include_router(verify.router, tags=["verification"])
 app.include_router(revoke.router, tags=["revocation"])
 app.include_router(user.router, tags=["user"])
+app.include_router(metrics.router, tags=["metrics"])
 
 
 @app.exception_handler(ConcurrentEnrollmentError)
