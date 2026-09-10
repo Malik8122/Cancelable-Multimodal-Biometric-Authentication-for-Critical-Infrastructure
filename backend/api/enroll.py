@@ -18,7 +18,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import EnrollResponse
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_image, validate_upload
+from backend.utils import decode_biometric_sample
 
 logger = logging.getLogger("backend.api.enroll")
 
@@ -34,9 +34,7 @@ def enroll(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> EnrollResponse:
-    contents = image.file.read()
-    validate_upload(image, contents, settings)
-    raw_image = decode_image(contents)
+    raw_image = decode_biometric_sample(modality, image, settings)
 
     resolved_application_id = application_id or settings.application_id
     service = get_service_for_modality(modality)

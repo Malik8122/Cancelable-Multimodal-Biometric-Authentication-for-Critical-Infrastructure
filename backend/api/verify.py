@@ -17,7 +17,7 @@ from backend.config import Settings, get_settings
 from backend.database.schema import AuthenticateResponse
 from backend.database.session import get_db
 from backend.services import get_service_for_modality
-from backend.utils import decode_image, validate_upload
+from backend.utils import decode_biometric_sample
 
 logger = logging.getLogger("backend.api.verify")
 
@@ -32,9 +32,7 @@ def _verify(
     db: Session,
     settings: Settings,
 ) -> AuthenticateResponse:
-    contents = image.file.read()
-    validate_upload(image, contents, settings)
-    raw_image = decode_image(contents)
+    raw_image = decode_biometric_sample(modality, image, settings)
 
     resolved_application_id = application_id or settings.application_id
     service = get_service_for_modality(modality)
@@ -82,3 +80,18 @@ def verify_fingerprint(
     settings: Settings = Depends(get_settings),
 ) -> AuthenticateResponse:
     return _verify("fingerprint", user_id, application_id, image, db, settings)
+
+
+@router.post("/verify/voice", response_model=AuthenticateResponse)
+def verify_voice(
+    user_id: str = Form(...),
+    application_id: str | None = Form(None),
+    image: UploadFile = File(..., description="WAV audio file"),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> AuthenticateResponse:
+    """Named `image` for consistency with the other three `/verify/*` routes'
+    shared `_verify` helper - it's actually a WAV audio upload, decoded via
+    `decode_biometric_sample`'s voice branch. `docs/BACKEND_API.md` documents
+    the field's real content for callers."""
+    return _verify("voice", user_id, application_id, image, db, settings)

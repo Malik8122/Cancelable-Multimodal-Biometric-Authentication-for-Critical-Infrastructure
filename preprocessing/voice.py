@@ -26,6 +26,7 @@ Then: 80-bin log-mel filterbank extraction.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,16 @@ N_FFT = 400  # 25ms at 16kHz
 HOP_LENGTH = 160  # 10ms at 16kHz
 
 
+def _normalize_pcm_waveform(sample_rate: int, waveform: np.ndarray) -> tuple[np.ndarray, int]:
+    """Shared by `load_wav_file`/`load_wav_bytes`: int PCM -> float32 in [-1, 1]."""
+    if np.issubdtype(waveform.dtype, np.integer):
+        max_value = float(np.iinfo(waveform.dtype).max)
+        waveform = waveform.astype(np.float32) / max_value
+    else:
+        waveform = waveform.astype(np.float32)
+    return waveform, sample_rate
+
+
 def load_wav_file(path: str | Path) -> tuple[np.ndarray, int]:
     """Read a WAV file into a float32 waveform in [-1, 1] plus its sample rate.
 
@@ -49,12 +60,15 @@ def load_wav_file(path: str | Path) -> tuple[np.ndarray, int]:
     fallback for other formats without changing this function's contract).
     """
     sample_rate, waveform = wavfile.read(path)
-    if np.issubdtype(waveform.dtype, np.integer):
-        max_value = float(np.iinfo(waveform.dtype).max)
-        waveform = waveform.astype(np.float32) / max_value
-    else:
-        waveform = waveform.astype(np.float32)
-    return waveform, sample_rate
+    return _normalize_pcm_waveform(sample_rate, waveform)
+
+
+def load_wav_bytes(contents: bytes) -> tuple[np.ndarray, int]:
+    """Same as `load_wav_file`, for WAV bytes already read into memory
+    (e.g. `backend/api/*.py`'s uploaded-file handling, which reads an
+    `UploadFile` into bytes once rather than seeking a stream twice)."""
+    sample_rate, waveform = wavfile.read(io.BytesIO(contents))
+    return _normalize_pcm_waveform(sample_rate, waveform)
 
 
 def _hz_to_mel(hz: np.ndarray | float) -> np.ndarray | float:

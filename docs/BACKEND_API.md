@@ -1,8 +1,9 @@
 # Backend API
 
 FastAPI REST API over `template_protection/` and `embeddings/pipelines.py`.
-No frontend, no dashboard, no multimodal fusion yet - those are Phase 3
-(`docs/ROADMAP.md`). Run locally with:
+Covers all four modalities (face, iris, fingerprint, voice); multimodal
+fusion (`POST /authenticate/fusion`) and the Phase 3A dashboard are documented
+once built (`docs/ROADMAP.md`). Run locally with:
 
 ```bash
 cp .env.example .env   # then set a real MASTER_SECRET
@@ -11,6 +12,10 @@ uvicorn backend.main:app --reload
 
 Interactive docs (Swagger UI) are available at `http://127.0.0.1:8000/docs`
 once running, auto-generated from the same Pydantic models documented below.
+
+**CORS**: only origins listed in the `CORS_ALLOWED_ORIGINS` environment
+variable (comma-separated; defaults to `http://localhost:5173`, the Vite dev
+server) may call this API from a browser - see `backend/main.py::_resolve_cors_origins`.
 
 ## Scope note: "auth" here means biometric verification
 
@@ -24,12 +29,15 @@ change to what's described here.
 
 ## Conventions
 
-- All image-accepting endpoints take `multipart/form-data` with an `image`
-  file field plus ordinary form fields - not JSON with a base64 image.
+- All biometric-accepting endpoints take `multipart/form-data` with an
+  `image` file field plus ordinary form fields - not JSON with a base64
+  payload. For voice, `image` is still the field name (for route-handler
+  symmetry with the other three) but its *content* is a WAV audio file, not
+  a picture - see `backend/utils.py::decode_biometric_sample`.
 - `application_id` is optional on every request; omitting it falls back to
   `backend/config.py`'s `Settings.application_id` (`"capstone-demo"` by
   default).
-- `modality` is one of `"face"`, `"iris"`, `"fingerprint"`.
+- `modality` is one of `"face"`, `"iris"`, `"fingerprint"`, `"voice"`.
 - Only protected templates are ever persisted or returned - no endpoint
   response includes a raw image, a raw embedding, or template bytes.
 
@@ -42,9 +50,9 @@ Preprocess -> embed -> transform -> store a new protected template.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `user_id` | string | yes | External identifier, e.g. `"U001"` |
-| `modality` | string | yes | `face` \| `iris` \| `fingerprint` |
+| `modality` | string | yes | `face` \| `iris` \| `fingerprint` \| `voice` |
 | `application_id` | string | no | Defaults to `Settings.application_id` |
-| `image` | file | yes | PNG/JPEG/BMP, under `Settings.max_upload_size_bytes` |
+| `image` | file | yes | PNG/JPEG/BMP for face/iris/fingerprint, WAV for voice; under `Settings.max_upload_size_bytes` |
 
 **Response** `200 OK`:
 
@@ -88,10 +96,12 @@ modality, application), this returns `200` with `"authenticated": false,
 "score": 0.0` rather than an error - a missing enrollment and a failed match
 are both "not authenticated" from a caller's point of view.
 
-## `POST /verify/face` · `POST /verify/iris` · `POST /verify/fingerprint`
+## `POST /verify/face` · `POST /verify/iris` · `POST /verify/fingerprint` · `POST /verify/voice`
 
 Identical to `/authenticate`, with the modality fixed by the URL instead of a
 form field (so the request omits `modality`). Same response shape.
+`/verify/voice`'s `image` field is a WAV file (see the Conventions note
+above).
 
 ## `POST /revoke-template`
 
@@ -167,7 +177,7 @@ Liveness check: `{"status": "ok"}`. No auth, no dependencies touched.
 | `404 Not Found` | `GET /user/{id}` for an unenrolled user |
 | `409 Conflict` | Two concurrent `/enroll` or `/revoke-template` calls raced for the same (user, modality, application) — retry |
 | `413 Request Entity Too Large` | Upload exceeds `Settings.max_upload_size_bytes` |
-| `415 Unsupported Media Type` | Upload's content-type isn't in `Settings.allowed_content_types` |
+| `415 Unsupported Media Type` | Upload's content-type isn't in `Settings.allowed_content_types` (images) or `Settings.allowed_audio_content_types` (voice) |
 | `422 Unprocessable Entity` | Unknown `modality` value, or a missing required field |
 
 Every error body is `{"detail": "<message>"}` (FastAPI's default).

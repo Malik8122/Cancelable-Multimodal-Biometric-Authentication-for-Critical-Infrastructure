@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 
 from backend.services.base_service import ModalityService
 
-_SUPPORTED_MODALITIES = ("face", "iris", "fingerprint")
+_SUPPORTED_MODALITIES = ("face", "iris", "fingerprint", "voice")
 
 
 def get_service_for_modality(modality: str) -> ModalityService:
@@ -34,6 +34,10 @@ def get_service_for_modality(modality: str) -> ModalityService:
         from backend.services.fingerprint_service import get_fingerprint_service
 
         return get_fingerprint_service()
+    if modality == "voice":
+        from backend.services.voice_service import get_voice_service
+
+        return get_voice_service()
 
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
