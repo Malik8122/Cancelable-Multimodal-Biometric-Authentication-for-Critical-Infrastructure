@@ -1,0 +1,35 @@
+{
+  "embedding_dim": 512,
+  "frozen_backbone_layers": [
+    "conv1",
+    "bn1",
+    "layer1"
+  ],
+  "arcface_margin": 0.5,
+  "arcface_scale": 64.0,
+  "label_smoothing": 0.1,
+  "hard_negative_start_epoch": 10,
+  "hard_negative_margin": 0.3,
+  "hard_negative_weight": 0.1,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "betas": [
+    0.9,
+    0.999
+  ],
+  "grad_clip_norm": 1.0,
+  "mixed_precision": true,
+  "warmup_epochs": 3,
+  "total_epochs": 30,
+  "min_lr": 1e-06,
+  "identities_per_batch": 16,
+  "samples_per_identity": 4,
+  "early_stopping_patience": 8,
+  "min_epochs_before_early_stopping": 10,
+  "train_val_test_split": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "split_seed": 42
+}

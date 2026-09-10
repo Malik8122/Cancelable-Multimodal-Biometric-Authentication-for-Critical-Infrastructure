@@ -37,9 +37,12 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# --- Evaluation outputs (regenerable) ---
+# --- Evaluation outputs ---
+# Plots stay regenerable/ignored. CSVs from real (Kaggle GPU) training runs
+# are committed deliberately - they represent hours of real compute, are the
+# metrics dashboard's actual data source (backend/api/metrics.py), and
+# aren't something you'd want to silently lose or have to rerun to get back.
 evaluation/results/*.png
-evaluation/results/*.csv
 !evaluation/results/.gitkeep
 
 # --- Kaggle credentials / pulled kernel output (never commit) ---
