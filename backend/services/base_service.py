@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from backend.config import Settings
 from backend.database import crud
 from backend.database.models import ProtectedTemplate
+from backend.security_validation import assert_valid, validate_authentication
+from backend.threshold_loader import get_modality_threshold
 from embeddings.pipelines import ModalityPipeline
 from template_protection.biohash import TEMPLATE_FORMAT_VERSION, generate_template
 from template_protection.hkdf_keys import derive_key
@@ -31,6 +33,14 @@ class AuthenticationResult:
     score: float
     threshold: float
     authenticated: bool
+    #: 1 - score: the Hamming-distance complement of `score`, exposed for
+    #: debugging/evaluation (0.0 when nothing was enrolled - there is no
+    #: comparison to report a distance for).
+    distance: float = 0.0
+    #: Which template_version/key_version the stored template being
+    #: compared against was generated under (0 when nothing is enrolled).
+    template_version: int = 0
+    key_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -94,10 +104,17 @@ class ModalityService:
         nothing is enrolled for this (user, modality, application) - a
         missing enrollment and a failed match are both "not authenticated"
         from the caller's point of view.
+
+        The threshold compared against is resolved per-modality from real
+        calibration data when it exists (`backend/threshold_loader.py`),
+        falling back to `Settings.match_threshold` with a logged warning
+        otherwise - no modality ever hardcodes 0.9 directly anymore.
         """
+        threshold = get_modality_threshold(self.modality, self.settings.match_threshold)
+
         stored = crud.get_active_template(db, user_id, self.modality, application_id)
         if stored is None:
-            return AuthenticationResult(score=0.0, threshold=self.settings.match_threshold, authenticated=False)
+            return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)
 
         embedding = self.pipeline.embed(raw_image)
         key = derive_key(
@@ -110,9 +127,22 @@ class ModalityService:
         candidate_template = generate_template(embedding, key, output_bits=stored.output_bits)
         stored_template = unpack_bits(stored.protected_template, num_bits=stored.output_bits)
 
+        assert_valid(
+            validate_authentication(settings=self.settings, stored=stored, key=key, candidate_template_bits=candidate_template),
+            modality=self.modality,
+            user_id=user_id,
+        )
+
         score = compare(candidate_template, stored_template, metric="hamming")
-        authenticated = accept(score, threshold=self.settings.match_threshold, metric="hamming")
-        return AuthenticationResult(score=score, threshold=self.settings.match_threshold, authenticated=authenticated)
+        authenticated = accept(score, threshold=threshold, metric="hamming")
+        return AuthenticationResult(
+            score=score,
+            threshold=threshold,
+            authenticated=authenticated,
+            distance=1.0 - score,
+            template_version=stored.template_version,
+            key_version=stored.key_version,
+        )
 
     def revoke(self, db: Session, raw_image: np.ndarray, user_id: str, application_id: str) -> RevocationResult:
         """Rotate the key for (user, modality, application) and store the resulting new template.

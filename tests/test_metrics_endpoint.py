@@ -86,3 +86,28 @@ def test_iris_metrics_are_unavailable_not_fabricated(client):
 def test_invalid_modality_is_rejected(client):
     response = client.get("/metrics/retina")
     assert response.status_code == 422
+
+
+def test_calibrated_fields_are_merged_under_distinct_keys_when_present(client, monkeypatch, tmp_path):
+    """Bug-7's "expose calibrated FAR/FRR": when a real
+    evaluation/threshold_calibration.py report exists for a modality, its
+    numbers appear under `calibrated_*` keys - distinct from `far`/`frr`
+    above, which are a different score space (raw embeddings, not protected
+    templates) and must never be silently conflated with these."""
+    import backend.api.metrics as metrics_module
+
+    monkeypatch.setattr(metrics_module, "_RESULTS_DIR", tmp_path)
+    (tmp_path / "fingerprint_threshold.json").write_text(
+        '{"threshold": 0.87, "eer": 0.05, "far": 0.04, "frr": 0.06, "auc": 0.95}', encoding="utf-8"
+    )
+
+    response = client.get("/metrics/fingerprint")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["calibrated"] is True
+    assert body["metrics"]["calibrated_threshold"] == pytest.approx(0.87)
+    assert body["metrics"]["calibrated_far"] == pytest.approx(0.04)
+    assert body["metrics"]["calibrated_frr"] == pytest.approx(0.06)
+    # available/available-metrics reflect the (now-missing, since _RESULTS_DIR
+    # was swapped to an empty tmp_path) raw-embedding CSV, independently.
+    assert body["available"] is False

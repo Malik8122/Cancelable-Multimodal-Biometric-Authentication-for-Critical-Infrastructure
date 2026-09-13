@@ -9,10 +9,12 @@ counts), per the spec's "never log templates, never print embeddings."
 from __future__ import annotations
 
 import logging
+import time
 
 import cv2
 import numpy as np
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
 from backend.config import Settings
 
@@ -104,6 +106,49 @@ def decode_biometric_sample(modality: str, file: UploadFile, settings: Settings)
         return decode_audio(contents)
     validate_upload(file, contents, settings)
     return decode_image(contents)
+
+
+def record_authentication_audit(
+    db: Session,
+    *,
+    user_id: str,
+    modality_list: list[str],
+    similarity_scores: dict[str, float],
+    thresholds_used: dict[str, float],
+    authenticated: bool,
+    started_at: float,
+    template_versions: dict[str, int],
+    key_versions: dict[str, int],
+    building_id: str | None = None,
+    fusion_score: float | None = None,
+    fusion_policy: str | None = None,
+) -> None:
+    """Write one server-side audit row for an authentication attempt.
+
+    Shared by `/authenticate`, `/verify/{modality}`, and
+    `/authenticate/fusion` so latency measurement and the "never log
+    anything biometric-derived beyond a score" rule live in exactly one
+    place (see `backend/database/models.py::AuditLog`'s docstring for what
+    "biometric-derived" excludes). `started_at` is a `time.perf_counter()`
+    value taken by the caller before decoding/inference began.
+    """
+    from backend.database import audit
+
+    latency_ms = round((time.perf_counter() - started_at) * 1000)
+    audit.record_attempt(
+        db,
+        user_id=user_id,
+        building_id=building_id,
+        modality_list=modality_list,
+        similarity_scores=similarity_scores,
+        thresholds_used=thresholds_used,
+        authenticated=authenticated,
+        latency_ms=latency_ms,
+        template_versions=template_versions,
+        key_versions=key_versions,
+        fusion_score=fusion_score,
+        fusion_policy=fusion_policy,
+    )
 
 
 def decode_audio(contents: bytes) -> tuple[np.ndarray, int]:

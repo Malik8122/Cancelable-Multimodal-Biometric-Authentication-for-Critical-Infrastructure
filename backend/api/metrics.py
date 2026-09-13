@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.services import _SUPPORTED_MODALITIES
+from evaluation.threshold_calibration import load_threshold_report
 
 router = APIRouter()
 
@@ -28,6 +29,10 @@ class ModalityMetricsResponse(BaseModel):
     modality: str
     available: bool
     metrics: dict[str, float] = Field(default_factory=dict)
+    #: Whether real protected-template calibration exists for this modality
+    #: (evaluation/threshold_calibration.py) - distinct from `available`,
+    #: which is about the raw-embedding `metrics` CSV.
+    calibrated: bool = False
 
 
 def _read_metrics_csv(modality: str) -> dict[str, float] | None:
@@ -45,6 +50,24 @@ def _read_metrics_csv(modality: str) -> dict[str, float] | None:
     return metrics
 
 
+def _calibrated_fields(modality: str) -> dict[str, float]:
+    """Real protected-template calibration numbers, under `calibrated_*`
+    keys so they can never be confused with the raw-embedding `far`/`frr`/
+    `eer`/`auc` above - those are two different score spaces (see
+    evaluation/threshold_calibration.py's module docstring), and merging
+    them under the same key names would silently conflate the two."""
+    report = load_threshold_report(modality, results_dir=_RESULTS_DIR)
+    if report is None:
+        return {}
+    return {
+        "calibrated_threshold": float(report["threshold"]),
+        "calibrated_far": float(report["far"]),
+        "calibrated_frr": float(report["frr"]),
+        "calibrated_eer": float(report["eer"]),
+        "calibrated_auc": float(report["auc"]),
+    }
+
+
 @router.get("/metrics/{modality}", response_model=ModalityMetricsResponse)
 def get_metrics(modality: str) -> ModalityMetricsResponse:
     if modality not in _SUPPORTED_MODALITIES:
@@ -53,7 +76,13 @@ def get_metrics(modality: str) -> ModalityMetricsResponse:
             detail=f"Unsupported modality {modality!r}; expected one of {_SUPPORTED_MODALITIES}",
         )
 
-    metrics = _read_metrics_csv(modality)
-    if metrics is None:
-        return ModalityMetricsResponse(modality=modality, available=False)
-    return ModalityMetricsResponse(modality=modality, available=True, metrics=metrics)
+    csv_metrics = _read_metrics_csv(modality)
+    calibrated_fields = _calibrated_fields(modality)
+    metrics = {**(csv_metrics or {}), **calibrated_fields}
+
+    return ModalityMetricsResponse(
+        modality=modality,
+        available=csv_metrics is not None,
+        metrics=metrics,
+        calibrated=bool(calibrated_fields),
+    )

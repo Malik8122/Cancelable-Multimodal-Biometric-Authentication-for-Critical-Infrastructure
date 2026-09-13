@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, LargeBinary, String, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -100,3 +100,53 @@ class ProtectedTemplate(Base):
             sqlite_where=text("is_active = 1"),
         ),
     )
+
+
+class AuditLog(Base):
+    """Server-side authentication attempt history - metadata only.
+
+    Written once per `/authenticate`, `/verify/{modality}`, or
+    `/authenticate/fusion` call (see `backend/database/audit.py::record_attempt`,
+    called from those three route handlers). Never stores anything
+    biometric-derived: no raw image/audio, no embedding, no protected
+    template - only identifiers, scores (already-computed floats, not
+    reconstructable back into a template or embedding), thresholds, and
+    outcomes. This is what makes "server-side audit log" compatible with the
+    same "cancelable, non-reconstructable" privacy posture as
+    `ProtectedTemplate` above.
+    """
+
+    __tablename__ = "audit_logs"
+
+    audit_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid4()))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+
+    #: Optional caller-supplied label (e.g. the frontend's building id) -
+    #: purely descriptive, the backend has no concept of "buildings" itself.
+    building_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    #: Modalities involved in this attempt, e.g. ["fingerprint", "voice"].
+    modality_list: Mapped[list[str]] = mapped_column(JSON)
+
+    #: {modality: score} - the same per-modality Hamming similarity scores
+    #: already returned in the HTTP response, not re-derivable into a
+    #: template or embedding.
+    similarity_scores: Mapped[dict[str, float]] = mapped_column(JSON)
+
+    #: {modality: threshold} - which calibrated (or fallback) threshold each
+    #: modality was actually compared against, per `backend/threshold_loader.py`.
+    thresholds_used: Mapped[dict[str, float]] = mapped_column(JSON)
+
+    fusion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fusion_policy: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    authenticated: Mapped[bool] = mapped_column(Boolean)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+
+    #: {modality: template_version} / {modality: key_version} - lets a
+    #: reviewer see key rotation happening across a user's history without
+    #: cross-referencing `protected_templates` (which only keeps the
+    #: *current* active row per context, not history).
+    template_versions: Mapped[dict[str, int]] = mapped_column(JSON)
+    key_versions: Mapped[dict[str, int]] = mapped_column(JSON)

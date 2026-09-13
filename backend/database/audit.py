@@ -1,0 +1,81 @@
+"""CRUD for `backend.database.models.AuditLog`.
+
+Kept separate from `crud.py` (which is about `User`/`ProtectedTemplate`) so
+the "what gets written to the audit trail" surface is easy to review on its
+own - exactly the kind of thing a privacy audit wants to check in one place.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from backend.database.models import AuditLog
+
+
+def record_attempt(
+    db: Session,
+    *,
+    user_id: str,
+    modality_list: list[str],
+    similarity_scores: dict[str, float],
+    thresholds_used: dict[str, float],
+    authenticated: bool,
+    latency_ms: int,
+    template_versions: dict[str, int],
+    key_versions: dict[str, int],
+    building_id: str | None = None,
+    fusion_score: float | None = None,
+    fusion_policy: str | None = None,
+) -> AuditLog:
+    """Insert one audit row. Never pass anything biometric-derived beyond a
+    similarity score - see `AuditLog`'s docstring for what that means."""
+    entry = AuditLog(
+        user_id=user_id,
+        building_id=building_id,
+        modality_list=modality_list,
+        similarity_scores=similarity_scores,
+        thresholds_used=thresholds_used,
+        fusion_score=fusion_score,
+        fusion_policy=fusion_policy,
+        authenticated=authenticated,
+        latency_ms=latency_ms,
+        template_versions=template_versions,
+        key_versions=key_versions,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def get_history_for_user(db: Session, user_id: str, limit: int = 50, offset: int = 0) -> list[AuditLog]:
+    """Paginated, newest-first - what `GET /audit/{user_id}` returns."""
+    statement = (
+        select(AuditLog)
+        .where(AuditLog.user_id == user_id)
+        .order_by(AuditLog.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(db.execute(statement).scalars().all())
+
+
+def count_for_user(db: Session, user_id: str) -> int:
+    return len(list(db.execute(select(AuditLog.audit_id).where(AuditLog.user_id == user_id)).scalars().all()))
+
+
+def get_system_history(db: Session, limit: int = 50) -> list[AuditLog]:
+    """Newest-first across every user - what `GET /audit/system` returns."""
+    statement = select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit)
+    return list(db.execute(statement).scalars().all())
+
+
+def delete_history_for_user(db: Session, user_id: str) -> int:
+    """Delete every audit row for `user_id`; returns how many were removed."""
+    existing = list(db.execute(select(AuditLog.audit_id).where(AuditLog.user_id == user_id)).scalars().all())
+    if not existing:
+        return 0
+    db.execute(delete(AuditLog).where(AuditLog.user_id == user_id))
+    db.commit()
+    return len(existing)

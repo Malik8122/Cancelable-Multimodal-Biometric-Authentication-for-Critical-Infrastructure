@@ -17,9 +17,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.api import authenticate, enroll, fusion, metrics, revoke, user, verify
+from backend.api import audit, authenticate, enroll, fusion, metrics, revoke, system, user, verify
 from backend.database.crud import ConcurrentEnrollmentError
 from backend.database.session import init_db
+from backend.security_validation import SecurityValidationError
 
 logging.basicConfig(level=logging.INFO)
 
@@ -80,6 +81,8 @@ app.include_router(verify.router, tags=["verification"])
 app.include_router(revoke.router, tags=["revocation"])
 app.include_router(user.router, tags=["user"])
 app.include_router(metrics.router, tags=["metrics"])
+app.include_router(audit.router, tags=["audit"])
+app.include_router(system.router, tags=["system"])
 
 
 @app.exception_handler(ConcurrentEnrollmentError)
@@ -91,6 +94,19 @@ def handle_concurrent_enrollment(_request: Request, exc: ConcurrentEnrollmentErr
     happen at all under FastAPI's threadpooled sync routes.
     """
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+@app.exception_handler(SecurityValidationError)
+def handle_security_validation_failure(_request: Request, exc: SecurityValidationError) -> JSONResponse:
+    """A structural security invariant broke (backend/security_validation.py) -
+    always a 500, never a normal `authenticated: false`, and never echoes the
+    exception's own detail (which names which checks failed - useful in
+    server logs, not something to hand back to an untrusted caller)."""
+    logging.getLogger("backend").error("Security validation failure: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Authentication could not be completed due to an internal security validation failure."},
+    )
 
 
 @app.get("/health")
