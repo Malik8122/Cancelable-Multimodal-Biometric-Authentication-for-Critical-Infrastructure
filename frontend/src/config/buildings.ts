@@ -3,38 +3,54 @@ import type { Modality } from '../api/types'
 export interface Building {
   id: string
   name: string
+  clearanceLevel: 'III' | 'IV' | 'V'
   description: string
   requiredModalities: Modality[]
-  clearanceLevel: 'Standard' | 'Elevated' | 'Critical'
 }
 
 // Demo content only - no real facilities, no real access-control claims.
-// `requiredModalities` just decides which capture steps the security page
-// offers for that building; the backend enforces nothing building-specific.
+// `requiredModalities` decides which capture steps registration/authentication
+// offer by default for that building; the backend enforces nothing
+// building-specific (it has no concept of "buildings" at all).
 export const BUILDINGS: Building[] = [
   {
-    id: 'data-center',
-    name: 'Primary Data Center',
-    description: 'Server halls and network core. Highest-assurance access only.',
+    id: 'national-data-centre',
+    name: 'National Data Centre',
+    clearanceLevel: 'V',
+    description: 'Primary sovereign data infrastructure. Maximum-assurance tri-factor checkpoint.',
     requiredModalities: ['face', 'fingerprint', 'voice'],
-    clearanceLevel: 'Critical',
   },
   {
-    id: 'research-lab',
-    name: 'Research Laboratory',
-    description: 'Restricted R&D floor. Dual-factor biometric checkpoint.',
+    id: 'defence-intelligence-hq',
+    name: 'Defence Intelligence Headquarters',
+    clearanceLevel: 'IV',
+    description: 'Classified intelligence operations floor. Dual-factor biometric checkpoint.',
     requiredModalities: ['face', 'fingerprint'],
-    clearanceLevel: 'Elevated',
   },
   {
-    id: 'admin-tower',
-    name: 'Administration Tower',
-    description: 'General office access. Single-factor checkpoint.',
-    requiredModalities: ['face'],
-    clearanceLevel: 'Standard',
+    id: 'central-research-laboratory',
+    name: 'Central Research Laboratory',
+    clearanceLevel: 'III',
+    description: 'Restricted R&D wing. Voice-augmented facial checkpoint.',
+    requiredModalities: ['face', 'voice'],
+  },
+  {
+    id: 'reserve-bank-vault',
+    name: 'Reserve Bank Secure Vault',
+    clearanceLevel: 'V',
+    description: 'National reserve custody vault. Maximum-assurance tri-factor checkpoint.',
+    requiredModalities: ['face', 'fingerprint', 'voice'],
   },
 ]
 
 export function getBuilding(id: string): Building | undefined {
   return BUILDINGS.find((building) => building.id === id)
+}
+
+export function securityStrength(modalities: Modality[]): 'None' | 'Medium' | 'High' | 'Maximum' {
+  const count = modalities.length
+  if (count === 0) return 'None'
+  if (count === 1) return 'Medium'
+  if (count === 2) return 'High'
+  return 'Maximum'
 }

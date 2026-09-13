@@ -16,6 +16,7 @@ import type {
   Modality,
   ModalityMetricsResponse,
   RevokeResponse,
+  SystemAuditResponse,
   SystemHealthResponse,
   UserModalitiesResponse,
 } from './types'
@@ -39,15 +40,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T
   }
   return (await response.json()) as T
-}
-
-export async function checkHealth(): Promise<boolean> {
-  try {
-    const res = await fetch(`${BASE_URL}/health`)
-    return res.ok
-  } catch {
-    return false
-  }
 }
 
 function biometricForm(
@@ -106,12 +98,13 @@ export async function authenticateFusion(
   userId: string,
   applicationId: string,
   samples: FusionSample[],
-  fusionPolicy?: FusionPolicy,
+  options?: { fusionPolicy?: FusionPolicy; buildingId?: string },
 ): Promise<FusionAuthenticateResponse> {
   const form = new FormData()
   form.append('user_id', userId)
   form.append('application_id', applicationId)
-  if (fusionPolicy) form.append('fusion_policy', fusionPolicy)
+  if (options?.fusionPolicy) form.append('fusion_policy', options.fusionPolicy)
+  if (options?.buildingId) form.append('building_id', options.buildingId)
   for (const { modality, sample, filename } of samples) {
     form.append(FUSION_FIELD_NAME[modality], sample, filename)
   }
@@ -157,4 +150,17 @@ export async function getUserAuditHistory(userId: string, limit = 20): Promise<A
     if (error instanceof ApiError) return null
     throw error
   }
+}
+
+export async function getSystemAuditHistory(limit = 50): Promise<SystemAuditResponse | null> {
+  try {
+    return await request<SystemAuditResponse>(`/audit/system?limit=${limit}`)
+  } catch (error) {
+    if (error instanceof ApiError) return null
+    throw error
+  }
+}
+
+export async function deleteUserAuditHistory(userId: string): Promise<void> {
+  await request<void>(`/audit/${encodeURIComponent(userId)}`, { method: 'DELETE' })
 }

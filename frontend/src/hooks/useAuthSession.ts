@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { checkHealth } from '../api/client'
-import type { FusionAuthenticateResponse, Modality } from '../api/types'
+import { getSystemHealth } from '../api/client'
+import type { FusionAuthenticateResponse, Modality, SystemHealthResponse } from '../api/types'
 
 const USER_ID_KEY = 'biometric-demo.user-id'
 const LOG_KEY = 'biometric-demo.performance-log'
@@ -13,7 +13,7 @@ const LOG_KEY = 'biometric-demo.performance-log'
 function loadOrCreateUserId(): string {
   const existing = localStorage.getItem(USER_ID_KEY)
   if (existing) return existing
-  const created = `DEMO-${Math.random().toString(36).slice(2, 10).toUpperCase()}`
+  const created = `OPERATOR-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
   localStorage.setItem(USER_ID_KEY, created)
   return created
 }
@@ -40,22 +40,27 @@ function loadLog(): PerformanceLogEntry[] {
 }
 
 /**
- * Session identity, a local (this-browser-only) performance/audit log, and
- * live backend reachability. The log is explicitly a client-side demo
- * artifact - there is no server-side audit-log table (see
- * docs/ROADMAP.md); it records the *real* responses the backend already
- * returned, it doesn't compute anything new.
+ * Session identity, a local (this-browser-only) quick-access performance
+ * log for the Result page's session timeline, and live `GET /system/health`
+ * polling. Real, durable audit history lives server-side now (Phase 2.5's
+ * AuditLog table, via api/client.ts's getUserAuditHistory/getSystemHealth) -
+ * this local log is just a fast, no-round-trip convenience, not the source
+ * of truth the Analytics page uses.
  */
 export function useAuthSession() {
   const [userId] = useState(loadOrCreateUserId)
   const [log, setLog] = useState<PerformanceLogEntry[]>(loadLog)
-  const [backendOnline, setBackendOnline] = useState<boolean | null>(null)
+  const [health, setHealth] = useState<SystemHealthResponse | null>(null)
+  const [healthChecked, setHealthChecked] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
-      const online = await checkHealth()
-      if (!cancelled) setBackendOnline(online)
+      const result = await getSystemHealth()
+      if (!cancelled) {
+        setHealth(result)
+        setHealthChecked(true)
+      }
     }
     poll()
     const interval = setInterval(poll, 15_000)
@@ -81,5 +86,12 @@ export function useAuthSession() {
     localStorage.removeItem(LOG_KEY)
   }, [])
 
-  return { userId, log, recordAttempt, clearLog, backendOnline }
+  return {
+    userId,
+    log,
+    recordAttempt,
+    clearLog,
+    health,
+    backendOnline: healthChecked ? health !== null : null,
+  }
 }

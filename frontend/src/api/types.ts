@@ -133,6 +133,10 @@ export interface AuditHistoryResponse {
   entries: AuditLogEntry[]
 }
 
+export interface SystemAuditResponse {
+  entries: AuditLogEntry[]
+}
+
 export interface ApiErrorBody {
   detail: string
 }
