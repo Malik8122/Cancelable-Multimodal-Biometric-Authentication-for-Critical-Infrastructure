@@ -18,13 +18,21 @@ export interface AuthenticateResponse {
   score: number
   threshold: number
   authenticated: boolean
+  distance: number
+  template_version: number
+  key_version: number
 }
 
 export interface ModalityAuthenticationResult {
   score: number
   threshold: number
   authenticated: boolean
+  distance: number
+  template_version: number
+  key_version: number
 }
+
+export type FusionPolicy = 'ALL_REQUIRED' | 'AT_LEAST_TWO' | 'WEIGHTED'
 
 export interface FusionAuthenticateResponse {
   user_id: string
@@ -33,6 +41,10 @@ export interface FusionAuthenticateResponse {
   fused_score: number
   fusion_threshold: number
   authenticated: boolean
+  fusion_policy: FusionPolicy
+  required_modalities: Modality[]
+  matched_modalities: Modality[]
+  failed_modalities: Modality[]
 }
 
 export interface RevokeResponse {
@@ -60,6 +72,7 @@ export interface UserModalitiesResponse {
 export interface ModalityMetricsResponse {
   modality: Modality
   available: boolean
+  calibrated: boolean
   metrics: Partial<{
     num_samples: number
     num_genuine_pairs: number
@@ -73,7 +86,51 @@ export interface ModalityMetricsResponse {
     recall: number
     f1: number
     auc: number
+    // Real protected-template calibration (evaluation/threshold_calibration.py) -
+    // a different score space than the raw-embedding fields above, so these
+    // are deliberately separate keys, never merged into far/frr/eer/auc.
+    calibrated_threshold: number
+    calibrated_far: number
+    calibrated_frr: number
+    calibrated_eer: number
+    calibrated_auc: number
   }>
+}
+
+export interface SystemHealthResponse {
+  backend: string
+  database: string
+  face_model: string
+  fingerprint_model: string
+  voice_model: string
+  template_protection: string
+  fusion_policy: FusionPolicy
+  thresholds_loaded: boolean
+  audit_logging: boolean
+}
+
+export interface AuditLogEntry {
+  audit_id: string
+  timestamp: string
+  user_id: string
+  building_id: string | null
+  modality_list: Modality[]
+  similarity_scores: Partial<Record<Modality, number>>
+  thresholds_used: Partial<Record<Modality, number>>
+  fusion_score: number | null
+  fusion_policy: FusionPolicy | null
+  authenticated: boolean
+  latency_ms: number
+  template_versions: Partial<Record<Modality, number>>
+  key_versions: Partial<Record<Modality, number>>
+}
+
+export interface AuditHistoryResponse {
+  user_id: string
+  total: number
+  limit: number
+  offset: number
+  entries: AuditLogEntry[]
 }
 
 export interface ApiErrorBody {

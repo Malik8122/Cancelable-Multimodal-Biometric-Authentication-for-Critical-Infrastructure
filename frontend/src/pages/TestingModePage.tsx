@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getMetrics } from '../api/client'
-import type { Modality, ModalityMetricsResponse } from '../api/types'
+import { getMetrics, getSystemHealth } from '../api/client'
+import type { Modality, ModalityMetricsResponse, SystemHealthResponse } from '../api/types'
 import { AuthenticationLog } from '../components/AuthenticationLog'
 import { MetricCard } from '../components/MetricCard'
 import { ModelComparison } from '../components/ModelComparison'
+import { SystemHealthPanel } from '../components/SystemHealthPanel'
 import { TestCaseTable } from '../components/TestCaseTable'
 import { useSession } from '../context/SessionContext'
 
@@ -12,6 +13,7 @@ const MODALITIES: Modality[] = ['face', 'fingerprint', 'voice', 'iris']
 export function TestingModePage() {
   const { log, clearLog } = useSession()
   const [metrics, setMetrics] = useState<Partial<Record<Modality, ModalityMetricsResponse>>>({})
+  const [health, setHealth] = useState<SystemHealthResponse | null>(null)
 
   useEffect(() => {
     MODALITIES.forEach((modality) => {
@@ -19,12 +21,18 @@ export function TestingModePage() {
         .then((result) => setMetrics((prev) => ({ ...prev, [modality]: result })))
         .catch(() => {})
     })
+    getSystemHealth().then(setHealth)
   }, [])
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">
       <p className="mb-2 font-mono text-xs tracking-[0.2em] text-accent uppercase">Model Testing</p>
       <h1 className="mb-8 text-xl font-semibold text-text">Evaluation metrics &amp; live backend checks</h1>
+
+      <section className="mb-10">
+        <h2 className="mb-3 font-mono text-xs tracking-wider text-text-muted uppercase">System health</h2>
+        <SystemHealthPanel health={health} />
+      </section>
 
       <section className="mb-10">
         <h2 className="mb-3 font-mono text-xs tracking-wider text-text-muted uppercase">Per-modality metrics</h2>

@@ -8,12 +8,15 @@
 // backend/services/base_service.py) and simply passed through as-is.
 
 import type {
+  AuditHistoryResponse,
   AuthenticateResponse,
   EnrollResponse,
   FusionAuthenticateResponse,
+  FusionPolicy,
   Modality,
   ModalityMetricsResponse,
   RevokeResponse,
+  SystemHealthResponse,
   UserModalitiesResponse,
 } from './types'
 import { ApiError } from './types'
@@ -103,10 +106,12 @@ export async function authenticateFusion(
   userId: string,
   applicationId: string,
   samples: FusionSample[],
+  fusionPolicy?: FusionPolicy,
 ): Promise<FusionAuthenticateResponse> {
   const form = new FormData()
   form.append('user_id', userId)
   form.append('application_id', applicationId)
+  if (fusionPolicy) form.append('fusion_policy', fusionPolicy)
   for (const { modality, sample, filename } of samples) {
     form.append(FUSION_FIELD_NAME[modality], sample, filename)
   }
@@ -135,4 +140,21 @@ export async function getUser(userId: string): Promise<UserModalitiesResponse | 
 
 export async function getMetrics(modality: Modality): Promise<ModalityMetricsResponse> {
   return request<ModalityMetricsResponse>(`/metrics/${modality}`)
+}
+
+export async function getSystemHealth(): Promise<SystemHealthResponse | null> {
+  try {
+    return await request<SystemHealthResponse>('/system/health')
+  } catch {
+    return null
+  }
+}
+
+export async function getUserAuditHistory(userId: string, limit = 20): Promise<AuditHistoryResponse | null> {
+  try {
+    return await request<AuditHistoryResponse>(`/audit/${encodeURIComponent(userId)}?limit=${limit}`)
+  } catch (error) {
+    if (error instanceof ApiError) return null
+    throw error
+  }
 }
