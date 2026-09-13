@@ -41,6 +41,13 @@ export const BUILDINGS: Building[] = [
     description: 'National reserve custody vault. Maximum-assurance tri-factor checkpoint.',
     requiredModalities: ['face', 'fingerprint', 'voice'],
   },
+  {
+    id: 'emergency-operations-centre',
+    name: 'National Emergency Operations Centre',
+    clearanceLevel: 'III',
+    description: 'Rapid-response coordination floor. Single-factor checkpoint for fast shift changeover.',
+    requiredModalities: ['face'],
+  },
 ]
 
 export function getBuilding(id: string): Building | undefined {

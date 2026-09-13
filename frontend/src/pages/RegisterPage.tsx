@@ -7,6 +7,7 @@ import { ApiError, type Modality } from '../api/types'
 import { FaceCapture } from '../components/capture/FaceCapture'
 import { FingerprintCapture } from '../components/capture/FingerprintCapture'
 import { VoiceCapture } from '../components/capture/VoiceCapture'
+import { Stepper } from '../components/biometric/Stepper'
 import { getBuilding } from '../config/buildings'
 import { useSession } from '../context/SessionContext'
 
@@ -117,25 +118,8 @@ export function RegisterPage() {
       <p className="mb-2 text-center font-mono text-xs tracking-[0.25em] text-primary uppercase">{building.name}</p>
       <h1 className="mb-8 text-center text-xl font-semibold text-foreground">Biometric Registration</h1>
 
-      {/* Progress indicator */}
-      <div className="mb-10 flex items-center justify-center gap-2">
-        {progressSteps.map((label, i) => (
-          <div key={label} className="flex items-center gap-2">
-            <div
-              className={`flex h-7 items-center rounded-full border px-3 font-mono text-[9px] tracking-wider uppercase transition-colors ${
-                i < currentProgressIndex
-                  ? 'border-success/40 bg-success/10 text-success'
-                  : i === currentProgressIndex
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border text-muted-foreground'
-              }`}
-            >
-              {i < currentProgressIndex && <Check className="mr-1 h-2.5 w-2.5" />}
-              {label}
-            </div>
-            {i < progressSteps.length - 1 && <div className="h-px w-4 bg-border" />}
-          </div>
-        ))}
+      <div className="mb-10">
+        <Stepper steps={progressSteps} currentIndex={currentProgressIndex} />
       </div>
 
       <AnimatePresence mode="wait">
