@@ -39,6 +39,28 @@ change): two distinct, real contributing causes were found.
    was told not to do. `get_modality_threshold` already picks up a real
    calibration file automatically the moment one is produced - no code change
    needed for that later.
+
+A follow-up reliability sprint investigated real-data-anchored calibration
+further (see `scripts/calibrate_protected_thresholds.py`, uncommitted output)
+and surfaced two more important, real findings, captured here as permanent
+regression tests:
+
+3. fingerprint's real, measured raw-embedding accuracy is genuinely weak
+   (EER=30.77%, and its real *median impostor* cosine similarity is ~0.90 -
+   evaluation/results/fingerprint_roc.csv) - close enough to genuine-pair
+   territory that no protected-template threshold choice can make this
+   specific checkpoint both "always accept genuine" and "always reject a
+   realistic impostor" at once. That is a raw-model-accuracy ceiling, not
+   something the template-protection layer can calibrate around.
+4. A calibration methodology pitfall: pairing genuine/impostor samples under
+   *different* per-identity keys (as `evaluation/threshold_calibration.py`'s
+   general-purpose pairing does) measures an easier question than what this
+   system's real authenticate() flow does - it always compares under the
+   *claimed* identity's one key, for both the genuine candidate and any
+   impostor's candidate. A threshold calibrated against different-key pairs
+   looked cleanly separated but let a same-key impostor through in a direct
+   `ModalityService.authenticate()` check. `test_a_same_key_impostor_...`
+   below pins the *correct* (same-key) threat model as a permanent test.
 """
 
 from __future__ import annotations
@@ -166,3 +188,83 @@ def test_all_required_denies_the_exact_mixed_result_this_bug_report_describes():
     # this is ALL_REQUIRED correctly refusing to let two strong modalities
     # compensate for the one that individually failed, not a scoring error.
     assert decision.fused_score > 0.9
+
+
+def _unit_vector(dim: int, seed: int) -> np.ndarray:
+    from template_protection.utils import l2_normalize
+
+    return l2_normalize(np.random.default_rng(seed).standard_normal(dim))
+
+
+def _vector_with_cosine(base: np.ndarray, target_cosine: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    random_vec = rng.standard_normal(base.shape[0])
+    orthogonal = random_vec - np.dot(random_vec, base) * base
+    orthogonal = orthogonal / np.linalg.norm(orthogonal)
+    return target_cosine * base + np.sqrt(max(0.0, 1.0 - target_cosine**2)) * orthogonal
+
+
+def test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_current_threshold(db_session):
+    """The real threat this system defends against: `authenticate()` derives
+    the comparison key from the *claimed* user_id (see
+    backend/services/base_service.py), so an impostor presenting their own
+    biometric while claiming to be the victim is compared under the VICTIM'S
+    key, not their own - a materially different (harder) test than "does a
+    different key mask a similar embedding", which
+    evaluation/threshold_calibration.py's general-purpose pairing measures
+    instead (a distinction this sprint's investigation found the hard way -
+    see scripts/calibrate_protected_thresholds.py's docstring; an earlier,
+    incorrect calibration attempt would have let an impostor constructed this
+    exact way authenticate).
+
+    fingerprint's real, measured raw-embedding median impostor cosine
+    similarity is ~0.90 (evaluation/results/fingerprint_roc.csv) - genuinely
+    close to genuine-pair territory for this weak checkpoint (real EER=30.77%).
+    At the CURRENT (uncalibrated fallback) threshold=0.9, this still
+    correctly denies - proving today's threshold, whatever its reliability
+    cost for genuine users, has not been silently weakened.
+    """
+    from backend.config import get_settings
+    from backend.services.base_service import ModalityService
+
+    settings = get_settings()
+
+    class _DirectEmbedPipeline:
+        def __init__(self, vector: np.ndarray):
+            self.vector = vector
+
+        def embed(self, _raw_image: np.ndarray) -> np.ndarray:
+            return self.vector
+
+    victim_base = _unit_vector(512, seed=1)
+    pipeline = _DirectEmbedPipeline(victim_base)
+    service = ModalityService("fingerprint", pipeline, settings)
+    placeholder_raw = np.zeros((1, 1, 3), dtype=np.uint8)
+
+    service.enroll(db_session, placeholder_raw, user_id="VICTIM", application_id=APPLICATION_ID)
+
+    # A real, measured, close-to-genuine impostor similarity - not a
+    # best-case near-zero assumption.
+    pipeline.vector = _vector_with_cosine(victim_base, target_cosine=0.90, seed=2)
+    result = service.authenticate(db_session, placeholder_raw, user_id="VICTIM", application_id=APPLICATION_ID)
+
+    assert result.authenticated is False
+
+
+def test_fusion_only_requires_the_modalities_actually_submitted():
+    """Scenario D from the reliability sprint: a face-only building must not
+    require fingerprint/voice just because ALL_REQUIRED is the default policy.
+    `evaluate_fusion_policy`'s docstring already states this ("a modality that
+    was never provided must never appear here"), and backend/api/fusion.py
+    only populates `scores`/`individually_authenticated` from whichever
+    images/audio were actually uploaded - this test pins that contract at the
+    policy layer directly, independent of the HTTP route."""
+    scores = {"face": 0.97}
+    individually_authenticated = {"face": True}
+
+    decision = evaluate_fusion_policy(scores, individually_authenticated, FusionPolicy.ALL_REQUIRED, fusion_threshold=0.9)
+
+    assert decision.authenticated is True
+    assert decision.matched_modalities == ["face"]
+    assert "fingerprint" not in decision.matched_modalities and "fingerprint" not in decision.failed_modalities
+    assert "voice" not in decision.matched_modalities and "voice" not in decision.failed_modalities
