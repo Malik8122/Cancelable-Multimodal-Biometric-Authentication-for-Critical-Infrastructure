@@ -103,6 +103,48 @@ def test_trim_silence_on_fully_silent_clip_returns_input_unchanged():
     assert np.array_equal(trimmed, silence)
 
 
+def test_trim_silence_never_returns_more_samples_than_the_input():
+    """Regression test for the authentication-debug-sprint bug: `_trim_silence`
+    used to concatenate each *voiced* frame directly, but consecutive frames
+    overlap (`hop_length=160` < `frame_length=400`), so a mostly-or-fully
+    voiced clip - the common case, most real utterances aren't mostly silence -
+    got each sample re-emitted once per overlapping voiced frame that covered
+    it. A fully-voiced 4-second (64000-sample) clip was measured to come out
+    as ~159200 samples: 2.5x longer than the input, entirely made of
+    duplicated, shifted copies of itself.
+
+    `_fixed_length_segment`'s center-crop then selected from that unstable,
+    duplicated sequence, so a tiny amount of realistic input noise changed
+    which content survived the crop and the resulting embedding changed
+    catastrophically (observed: genuine same-speaker cosine similarity of
+    -0.18 instead of ~1.0) even though the whole pipeline is deterministic.
+
+    "Trimming silence" can only ever *remove* content, never add it - this is
+    the invariant that would have caught the bug immediately.
+    """
+    preprocessor = VoicePreprocessor(sample_rate=16_000)
+    fully_voiced = _tone(4.0, sample_rate=16_000, amplitude=0.5)
+
+    trimmed = preprocessor._trim_silence(fully_voiced)
+
+    assert len(trimmed) <= len(fully_voiced)
+
+
+def test_trim_silence_keeps_every_sample_exactly_once_when_fully_voiced():
+    """A stricter version of the invariant above: for a clip with no silence
+    at all, trimming should be close to a no-op (every sample is voiced), not
+    merely "not longer" - it must not silently drop *or* duplicate content."""
+    preprocessor = VoicePreprocessor(sample_rate=16_000)
+    fully_voiced = _tone(4.0, sample_rate=16_000, amplitude=0.5)
+
+    trimmed = preprocessor._trim_silence(fully_voiced)
+
+    # A few samples at the very end can legitimately fall outside the last
+    # frame window, but the result must be (near-)the full length, not a
+    # small fraction of it and not a multiple of it.
+    assert len(fully_voiced) - 400 <= len(trimmed) <= len(fully_voiced)
+
+
 def test_normalize_loudness_scales_toward_target_rms():
     preprocessor = VoicePreprocessor(target_rms=0.1)
     quiet = _tone(1.0, sample_rate=16_000, amplitude=0.01)

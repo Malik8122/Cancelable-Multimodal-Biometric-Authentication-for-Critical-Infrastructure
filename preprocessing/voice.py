@@ -155,6 +155,23 @@ class VoicePreprocessor:
         see docs/VOICE_MODEL.md). Falls back to returning the original
         waveform unchanged if every frame would otherwise be dropped (e.g. a
         fully-silent clip), rather than returning an empty array.
+
+        Builds a per-sample keep-mask rather than concatenating each voiced
+        frame's samples directly: `frame_length=400` overlaps across
+        consecutive frames since `hop_length=160` < `frame_length`, so naively
+        concatenating whole frames re-emits each sample once per voiced frame
+        that covers it - for a mostly-or-fully-voiced clip (the common case:
+        most real utterances aren't mostly silence) that can inflate the
+        output to *longer than the input* (a 4s/64000-sample clip became
+        ~159200 samples in practice). `_fixed_length_segment`'s center-crop
+        then selects from that unstable, duplicated sequence, so a tiny,
+        realistic amount of input noise shifts which content survives and the
+        resulting embedding changes catastrophically (observed: cosine
+        similarity of a genuine same-speaker "recapture" dropping to -0.18)
+        even though the pipeline is fully deterministic. A per-sample mask
+        (OR-combining every frame that covers a sample, rather than
+        concatenating frames) can only ever *select a subset* of the input,
+        so the trimmed output is always <= the input length.
         """
         if len(waveform) < frame_length:
             return waveform
@@ -174,9 +191,12 @@ class VoicePreprocessor:
         if not voiced.any():
             return waveform
 
-        kept_samples = np.concatenate(
-            [waveform[i * hop_length : i * hop_length + frame_length] for i in range(num_frames) if voiced[i]]
-        )
+        mask = np.zeros(len(waveform), dtype=bool)
+        for i in np.flatnonzero(voiced):
+            start = i * hop_length
+            mask[start : start + frame_length] = True
+
+        kept_samples = waveform[mask]
         return kept_samples if len(kept_samples) > 0 else waveform
 
     def _normalize_loudness(self, waveform: np.ndarray) -> np.ndarray:

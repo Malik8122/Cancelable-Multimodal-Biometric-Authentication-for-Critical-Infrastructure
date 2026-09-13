@@ -117,6 +117,48 @@ def test_enroll_then_verify_voice_via_the_real_api(client):
     assert body["score"] >= body["threshold"]
 
 
+def test_recapture_with_small_noise_is_no_longer_catastrophically_unstable(client):
+    """Regression test for the authentication-debug-sprint bug: before fixing
+    `preprocessing/voice.py::VoicePreprocessor._trim_silence`'s overlapping-
+    frame duplication, a genuine same-speaker "recapture" (the same tone plus
+    a tiny 1% amount of noise, standing in for real sensor/mic variation)
+    produced a similarity score of ~0.13-0.59 depending on noise level - once
+    even *negative* (-0.18) - because the unstable, duplicated intermediate
+    waveform meant the final center-cropped segment could end up almost
+    unrelated to the original. This doesn't assert a pass against the
+    (separately tracked, uncalibrated) match threshold - see
+    tests/test_authentication_debug_sprint.py for why that's a distinct,
+    not-yet-resolved gap - only that the fix restores basic stability: a
+    small perturbation must produce a *clearly correlated* result, not one
+    indistinguishable from (or worse than) chance.
+    """
+    pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
+    pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")
+
+    base = _tone(4.0)
+    rng = np.random.default_rng(5)
+    recaptured = base + rng.normal(scale=0.01 * np.std(base), size=base.shape).astype(np.float32)
+
+    enroll_response = client.post(
+        "/enroll",
+        data={"user_id": "U-VOICE-STABILITY", "modality": "voice", "application_id": APPLICATION_ID},
+        files={"image": ("sample.wav", _encode_wav(base), "audio/wav")},
+    )
+    assert enroll_response.status_code == 200
+
+    verify_response = client.post(
+        "/verify/voice",
+        data={"user_id": "U-VOICE-STABILITY", "application_id": APPLICATION_ID},
+        files={"image": ("recapture.wav", _encode_wav(recaptured), "audio/wav")},
+    )
+    assert verify_response.status_code == 200
+    body = verify_response.json()
+    # 0.5 is the Hamming-similarity midpoint (statistically-unrelated bit
+    # strings average ~0.5, see template_protection/biohash.py) - a genuine
+    # recapture must land clearly above that, not at-or-below chance.
+    assert body["score"] > 0.5, f"genuine recapture score collapsed to {body['score']} - the trim_silence bug may have regressed"
+
+
 def test_verify_voice_without_enrollment_returns_not_authenticated(client):
     pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
     pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")

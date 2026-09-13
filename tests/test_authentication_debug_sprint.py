@@ -1,0 +1,168 @@
+"""Regression tests from the "genuine user is being denied" debug sprint.
+
+Root-caused via `scripts/debug_authentication_pipeline.py` (kept in the repo
+so this trace can be re-run against any future checkpoint/preprocessing
+change): two distinct, real contributing causes were found.
+
+1. **A concrete bug** in `preprocessing/voice.py::VoicePreprocessor._trim_silence`
+   (fixed in this sprint - see `tests/test_voice_preprocessing.py`'s new
+   tests): overlapping voiced frames were concatenated directly instead of
+   merged into a per-sample mask, inflating a fully-voiced 4-second clip to
+   ~2.5x its length. `_fixed_length_segment`'s center-crop then selected from
+   that unstable, duplicated sequence, so a tiny amount of realistic capture
+   noise produced a wildly different final segment - observed as a genuine
+   same-speaker cosine similarity of -0.18 instead of ~1.0.
+
+2. **A separate, pre-existing, NOT fixed here** gap: `Settings.match_threshold`
+   (0.9) is applied as a fallback to every modality whenever
+   `evaluation/results/<modality>_threshold.json` doesn't exist yet - which is
+   currently the case for all of face/fingerprint/voice (confirmed: the
+   directory holds only the *_metrics.csv/*_roc.csv files from the Kaggle
+   *raw-embedding* evaluation runs, no *_threshold.json calibrated on
+   protected-template Hamming scores). 0.9 was never validated against that
+   score space; `config.py`'s own comment already flags it as "a conservative
+   starting point... real deployments should tune this... rather than
+   trusting this default blindly." Combined with `ALL_REQUIRED` fusion policy
+   (every submitted modality must individually pass), a single modality
+   sitting a little under 0.9 - which the debug script shows even a *fixed*
+   voice pipeline can genuinely do (~0.84-0.88 Hamming similarity for a
+   realistic small amount of capture variation) - is enough to deny an
+   otherwise-genuine multi-factor authentication.
+
+   This second gap is a **data** problem (no real, labeled, multi-sample
+   dataset is available in this environment to calibrate against - see
+   `evaluation/threshold_calibration.py`'s own docstring on why calibrating
+   against synthetic data would produce "a mathematically valid but
+   biometrically meaningless number"), not a code bug, so it is deliberately
+   NOT "fixed" by lowering `match_threshold` here - that would be exactly the
+   "do not lower thresholds blindly" / "do not fake success" thing this sprint
+   was told not to do. `get_modality_threshold` already picks up a real
+   calibration file automatically the moment one is produced - no code change
+   needed for that later.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from fusion.config import FusionPolicy
+from fusion.policy import evaluate_fusion_policy
+
+APPLICATION_ID = "capstone-demo"
+
+
+def _get_fingerprint_service():
+    pytest.importorskip("torchvision", reason="torchvision not installed in this environment")
+    from backend.services.fingerprint_service import get_fingerprint_service
+
+    return get_fingerprint_service()
+
+
+def _get_face_service():
+    pytest.importorskip("facenet_pytorch", reason="facenet-pytorch not installed in this environment")
+    from backend.services.face_service import get_face_service
+
+    return get_face_service()
+
+
+def _noisy(image: np.ndarray, scale: float, seed: int) -> np.ndarray:
+    """A synthetic stand-in for "the same physical biometric, captured again":
+    small additive pixel noise, representing sensor noise / minor
+    lighting-or-placement differences between two real captures."""
+    rng = np.random.default_rng(seed)
+    return np.clip(image.astype(np.float32) + rng.normal(scale=scale, size=image.shape), 0, 255).astype(np.uint8)
+
+
+def test_genuine_user_authenticates_with_a_second_slightly_varied_fingerprint_capture(
+    db_session, synthetic_fingerprint_image
+):
+    """The literal bug report: enroll once, then authenticate with a capture
+    that is similar but *not byte-identical* (a real second scan would never
+    be pixel-perfect) - this must still succeed. `_get_fingerprint_service`'s
+    real trained checkpoint + real CLAHE/Gabor preprocessing is robust to a
+    realistic amount of additive sensor noise (verified: still an exact
+    Hamming match up to noise scale=15 on a 0-255 image)."""
+    service = _get_fingerprint_service()
+    service.enroll(db_session, synthetic_fingerprint_image, user_id="U-GENUINE", application_id=APPLICATION_ID)
+
+    recaptured = _noisy(synthetic_fingerprint_image, scale=10.0, seed=1)
+    result = service.authenticate(db_session, recaptured, user_id="U-GENUINE", application_id=APPLICATION_ID)
+
+    assert result.authenticated is True
+    assert result.score >= result.threshold
+
+
+def test_genuine_user_authenticates_with_a_second_slightly_varied_face_capture(db_session):
+    """Same claim as above, for face - bypasses MTCNN detection/alignment
+    (which correctly rejects any non-face synthetic image, see
+    tests/test_preprocessing.py) by calling FaceEmbedder directly on an
+    already-"aligned"-shaped array, so this exercises the real trained face
+    network + real BioHash pipeline without needing a real photograph."""
+    pytest.importorskip("facenet_pytorch", reason="facenet-pytorch not installed in this environment")
+    from backend.config import get_settings
+    from backend.services.base_service import ModalityService
+    from models.face.inference import FaceEmbedder
+
+    settings = get_settings()
+    embedder = FaceEmbedder(checkpoint_path=settings.face_model_path)
+    assert embedder.mock_mode is False, "face checkpoint failed to load - falling back to mock mode"
+
+    class _DirectEmbedPipeline:
+        def embed(self, image: np.ndarray) -> np.ndarray:
+            return embedder.extract_embedding(image)
+
+    service = ModalityService("face", _DirectEmbedPipeline(), settings)
+
+    rng = np.random.default_rng(2)
+    enrolled_face = rng.integers(0, 255, (160, 160, 3), dtype=np.uint8)
+    service.enroll(db_session, enrolled_face, user_id="U-GENUINE-FACE", application_id=APPLICATION_ID)
+
+    recaptured = _noisy(enrolled_face, scale=3.0, seed=3)
+    result = service.authenticate(db_session, recaptured, user_id="U-GENUINE-FACE", application_id=APPLICATION_ID)
+
+    assert result.authenticated is True
+    assert result.score >= result.threshold
+
+
+def test_a_never_enrolled_user_cannot_authenticate(db_session, synthetic_fingerprint_image):
+    """"Different user is rejected", in the sense this system actually
+    implements: authentication is *verification against a claimed identity*
+    (there is no "identify who this biometric belongs to among all users"
+    mode - see backend/services/base_service.py's docstring), so the
+    unambiguous, always-true version of "not the enrolled user" is: no
+    active template exists for the claimed user_id at all."""
+    service = _get_fingerprint_service()
+    service.enroll(db_session, synthetic_fingerprint_image, user_id="U-REAL", application_id=APPLICATION_ID)
+
+    result = service.authenticate(
+        db_session, synthetic_fingerprint_image, user_id="someone-else-entirely", application_id=APPLICATION_ID
+    )
+
+    assert result.authenticated is False
+    assert result.score == 0.0
+
+
+def test_all_required_denies_the_exact_mixed_result_this_bug_report_describes():
+    """Direct regression test for the bug report's own scenario: a genuine
+    user's face and fingerprint both individually pass, but voice - even
+    with the `_trim_silence` fix - can genuinely sit a little under the
+    uncalibrated 0.9 fallback threshold (measured ~0.84-0.88 for a realistic
+    small amount of capture variation, via
+    scripts/debug_authentication_pipeline.py). Under ALL_REQUIRED (the
+    secure default), that must still deny the whole multi-factor attempt -
+    this is the fusion *policy* working exactly as designed; the actual fix
+    needed for this specific numeric gap is real threshold calibration data,
+    not a fusion-policy change (see this module's docstring)."""
+    scores = {"face": 1.0, "fingerprint": 1.0, "voice": 0.86}
+    individually_authenticated = {"face": True, "fingerprint": True, "voice": False}
+
+    decision = evaluate_fusion_policy(scores, individually_authenticated, FusionPolicy.ALL_REQUIRED, fusion_threshold=0.9)
+
+    assert decision.authenticated is False
+    assert decision.failed_modalities == ["voice"]
+    assert decision.matched_modalities == ["face", "fingerprint"]
+    # The averaged fused_score (0.953) would itself have cleared 0.9 - proof
+    # this is ALL_REQUIRED correctly refusing to let two strong modalities
+    # compensate for the one that individually failed, not a scoring error.
+    assert decision.fused_score > 0.9
