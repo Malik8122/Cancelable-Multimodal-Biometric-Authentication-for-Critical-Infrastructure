@@ -196,7 +196,7 @@ function IconContainer({
         className={cn(
           "relative flex aspect-square items-center justify-center rounded-full border transition-colors",
           active
-            ? "bg-primary/20 border-primary text-primary shadow-[0_0_16px_var(--color-primary)]"
+            ? "bg-primary/15 border-primary/60 text-primary"
             : "bg-muted border-border text-muted-foreground",
         )}
       >
@@ -206,7 +206,7 @@ function IconContainer({
               initial={{ opacity: 0, y: 10, x: "-50%" }}
               animate={{ opacity: 1, y: 0, x: "-50%" }}
               exit={{ opacity: 0, y: 2, x: "-50%" }}
-              className="absolute -top-8 left-1/2 w-fit rounded-md border border-border bg-popover px-2 py-0.5 font-mono text-[10px] tracking-wide whitespace-pre text-popover-foreground uppercase"
+              className="absolute -top-8 left-1/2 w-fit rounded-md border border-border bg-popover px-2 py-0.5 text-xs whitespace-pre text-popover-foreground"
             >
               {title}
             </motion.div>

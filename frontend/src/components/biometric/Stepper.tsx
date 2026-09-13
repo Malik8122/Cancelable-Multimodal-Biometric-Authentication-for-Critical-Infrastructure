@@ -16,18 +16,18 @@ export function Stepper({ steps, currentIndex }: StepperProps) {
         <li key={label} className="flex items-center gap-2">
           <span
             aria-current={i === currentIndex ? 'step' : undefined}
-            className={`flex h-7 items-center rounded-full border px-3 font-mono text-[9px] tracking-wider uppercase transition-colors ${
+            className={`flex h-7 items-center rounded-full border px-3.5 text-xs font-medium tracking-wide transition-colors ${
               i < currentIndex
-                ? 'border-success/40 bg-success/10 text-success'
+                ? 'border-success/30 bg-success/10 text-success'
                 : i === currentIndex
-                  ? 'border-primary bg-primary/10 text-primary'
+                  ? 'border-primary/60 bg-primary/10 text-primary'
                   : 'border-border text-muted-foreground'
             }`}
           >
-            {i < currentIndex && <Check className="mr-1 h-2.5 w-2.5" aria-hidden="true" />}
+            {i < currentIndex && <Check className="mr-1.5 h-3 w-3" aria-hidden="true" />}
             {label}
           </span>
-          {i < steps.length - 1 && <span className="h-px w-4 bg-border" aria-hidden="true" />}
+          {i < steps.length - 1 && <span className="h-px w-6 bg-border" aria-hidden="true" />}
         </li>
       ))}
     </ol>

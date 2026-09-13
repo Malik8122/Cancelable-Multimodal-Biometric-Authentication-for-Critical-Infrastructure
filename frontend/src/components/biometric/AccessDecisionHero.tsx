@@ -6,64 +6,58 @@ export function AccessDecisionHero({ authenticated }: { authenticated: boolean }
   const reducedMotion = useReducedMotion()
   const Icon = authenticated ? ShieldCheck : Lock
   const colorClass = authenticated ? 'text-success' : 'text-danger'
-  const ringClass = authenticated ? 'border-success/40' : 'border-danger/40'
-  const flashClass = authenticated ? 'bg-success' : 'bg-danger'
+  const ringClass = authenticated ? 'border-success/30' : 'border-danger/30'
+  const bgClass = authenticated ? 'bg-success/10' : 'bg-danger/10'
 
   return (
-    <div className="relative flex flex-col items-center overflow-hidden py-10">
-      <AnimatePresence>
-        <motion.div
-          key="flash"
-          className={`pointer-events-none fixed inset-0 z-40 ${flashClass}`}
-          initial={{ opacity: 0.3 }}
-          animate={{ opacity: 0 }}
-          transition={{ duration: reducedMotion ? 0.25 : 0.8, ease: 'easeOut' }}
-        />
-      </AnimatePresence>
-
-      {/* Two door leaves that slide open for a granted decision */}
-      {authenticated && !reducedMotion && (
+    <div className="relative flex flex-col items-center overflow-hidden py-14">
+      {/* Two door leaves that slide open for a granted decision, and stay
+          shut for a denied one - the door itself is the status indicator,
+          never relying on color alone. */}
+      {!reducedMotion && (
         <>
           <motion.div
-            className="absolute inset-y-0 left-0 z-10 w-1/2 bg-gradient-to-r from-background via-background to-transparent"
+            className="absolute inset-y-0 left-0 z-10 w-1/2 border-r border-white/5 bg-card"
             initial={{ x: 0 }}
-            animate={{ x: '-100%' }}
+            animate={authenticated ? { x: '-100%' } : { x: 0 }}
             transition={{ duration: 0.9, delay: 0.15, ease: [0.76, 0, 0.24, 1] }}
           />
           <motion.div
-            className="absolute inset-y-0 right-0 z-10 w-1/2 bg-gradient-to-l from-background via-background to-transparent"
+            className="absolute inset-y-0 right-0 z-10 w-1/2 border-l border-white/5 bg-card"
             initial={{ x: 0 }}
-            animate={{ x: '100%' }}
+            animate={authenticated ? { x: '100%' } : { x: 0 }}
             transition={{ duration: 0.9, delay: 0.15, ease: [0.76, 0, 0.24, 1] }}
           />
         </>
       )}
 
+      <AnimatePresence>
+        <motion.div
+          key="flash"
+          className={`pointer-events-none fixed inset-0 z-40 ${authenticated ? 'bg-success' : 'bg-danger'}`}
+          initial={{ opacity: 0.18 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: reducedMotion ? 0.25 : 0.8, ease: 'easeOut' }}
+        />
+      </AnimatePresence>
+
       <motion.div
-        initial={{ opacity: 0, scale: 0.6, rotate: -12 }}
-        animate={{ opacity: 1, scale: 1, rotate: 0 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 18, delay: 0.2 }}
-        className={`relative z-20 mb-6 flex h-32 w-32 items-center justify-center rounded-full border-2 ${ringClass}`}
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 180, damping: 20, delay: 0.25 }}
+        className={`relative z-20 mb-6 flex h-28 w-28 items-center justify-center rounded-full border ${ringClass} ${bgClass}`}
       >
-        {[0, 0.5].map((delay) => (
-          <motion.div
-            key={delay}
-            className={`absolute inset-0 rounded-full border-2 ${ringClass}`}
-            animate={authenticated ? { scale: [1, 1.45], opacity: [0.6, 0] } : { scale: [1, 1.15, 1], opacity: [0.8, 0.4, 0.8] }}
-            transition={{ duration: authenticated ? 1.8 : 1, repeat: Infinity, ease: authenticated ? 'easeOut' : 'easeInOut', delay }}
-          />
-        ))}
-        <Icon className={`h-14 w-14 ${colorClass}`} />
+        <Icon className={`h-11 w-11 ${colorClass}`} strokeWidth={1.5} />
       </motion.div>
 
-      <motion.h2
+      <motion.h1
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-        className={`relative z-20 mb-1 text-3xl font-bold tracking-wide uppercase ${colorClass}`}
+        transition={{ delay: 0.45 }}
+        className={`relative z-20 text-3xl font-semibold tracking-tight sm:text-4xl ${colorClass}`}
       >
         {authenticated ? 'Access Granted' : 'Access Denied'}
-      </motion.h2>
+      </motion.h1>
     </div>
   )
 }

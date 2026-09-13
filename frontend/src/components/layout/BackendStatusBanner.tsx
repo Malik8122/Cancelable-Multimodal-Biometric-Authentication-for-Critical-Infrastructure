@@ -14,10 +14,8 @@ export function BackendStatusBanner() {
   if (backendOnline) {
     return (
       <div className="flex items-center justify-center gap-2 border-b border-success/20 bg-success/5 px-4 py-1.5">
-        <ShieldCheck className="h-3 w-3 text-success" />
-        <span className="font-mono text-[10px] tracking-[0.15em] text-success uppercase">
-          Secure link established - live backend inference
-        </span>
+        <ShieldCheck className="h-3 w-3 text-success" strokeWidth={1.5} />
+        <span className="text-xs text-success">Secure link established - live backend inference</span>
       </div>
     )
   }
@@ -28,8 +26,8 @@ export function BackendStatusBanner() {
       transition={{ duration: 1.6, repeat: Infinity }}
       className="flex items-center justify-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-1.5"
     >
-      <ShieldAlert className="h-3 w-3 text-warning" />
-      <span className="font-mono text-[10px] tracking-[0.15em] text-warning uppercase">
+      <ShieldAlert className="h-3 w-3 text-warning" strokeWidth={1.5} />
+      <span className="text-xs text-warning">
         Backend unreachable - start it with `uvicorn backend.main:app --reload`
       </span>
     </motion.div>

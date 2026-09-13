@@ -7,8 +7,8 @@ import { ApiError, type Modality } from '../api/types'
 import { FaceCapture } from '../components/capture/FaceCapture'
 import { FingerprintCapture } from '../components/capture/FingerprintCapture'
 import { VoiceCapture } from '../components/capture/VoiceCapture'
+import { ClearanceBadge } from '../components/biometric/ClearanceBadge'
 import { ModalityChip } from '../components/biometric/ModalityChip'
-import { SecurityStrengthMeter } from '../components/biometric/SecurityStrengthMeter'
 import { getBuilding } from '../config/buildings'
 import { useSession } from '../context/SessionContext'
 
@@ -30,16 +30,16 @@ const MODALITY_META: Record<'face' | 'fingerprint' | 'voice', { label: string; i
 function buildProcessingSteps(modalities: Modality[]) {
   const preprocessing = modalities.map((m) => ({
     key: `preprocess-${m}`,
-    label: `${m[0].toUpperCase()}${m.slice(1)} preprocessing complete`,
+    label: `Capturing ${m}`,
     icon: MODALITY_META[m as 'face' | 'fingerprint' | 'voice'].icon,
   }))
   return [
     ...preprocessing,
-    { key: 'embed', label: 'Embedding extraction', icon: Sparkles },
-    { key: 'biohash', label: 'Cancelable template generated', icon: Lock },
-    { key: 'match', label: 'Protected template matched', icon: ShieldQuestion },
-    { key: 'fusion', label: 'Fusion engine evaluating', icon: Layers },
-    { key: 'decision', label: 'Security decision generated', icon: Check },
+    { key: 'embed', label: 'Generating embeddings', icon: Sparkles },
+    { key: 'biohash', label: 'Applying HKDF and BioHash', icon: Lock },
+    { key: 'match', label: 'Matching stored template', icon: ShieldQuestion },
+    { key: 'fusion', label: 'Fusion evaluation', icon: Layers },
+    { key: 'decision', label: 'Security decision', icon: Check },
   ]
 }
 
@@ -65,7 +65,7 @@ export function AuthenticatePage() {
       <div className="mx-auto max-w-2xl px-6 py-16 text-center">
         <p className="text-muted-foreground">Unknown facility.</p>
         <Link to="/" className="mt-4 inline-block text-sm text-primary hover:underline">
-          Return to Security Operations Center
+          Return to the campus
         </Link>
       </div>
     )
@@ -100,7 +100,8 @@ export function AuthenticatePage() {
     // stages (the backend does all of this inside one request-response - we
     // don't get granular server-sent progress) - the real network call runs
     // concurrently, and the final "decision generated" step only resolves
-    // once the real response actually arrives (see below).
+    // once the real response actually arrives (see below). The elapsed timer
+    // above is real, measured client-side; there is no fake progress bar.
     const illustrativeSteps = steps.length - 1
     const stepInterval = window.setInterval(() => {
       setActiveStep((s) => (s < illustrativeSteps ? s + 1 : s))
@@ -140,28 +141,26 @@ export function AuthenticatePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-12">
-      <p className="mb-2 text-center font-mono text-xs tracking-[0.25em] text-primary uppercase">Identity Verification Portal</p>
-      <h1 className="mb-10 text-center text-xl font-semibold text-foreground">{building.name}</h1>
+    <div className="mx-auto max-w-4xl px-6 py-14">
+      <div className="mb-12 flex flex-col items-center gap-2 text-center">
+        <span className="text-xs font-medium tracking-wide text-muted-foreground">Identity Verification Portal</span>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{building.name}</h1>
+        <ClearanceBadge level={building.clearanceLevel} />
+      </div>
 
       <AnimatePresence mode="wait">
         {phase === 'select' && (
           <motion.div key="select" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-xl">
-            <p className="mb-4 text-center font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
-              Select authentication factors
-            </p>
-            <div className="mb-6 grid grid-cols-3 gap-3">
+            <p className="mb-4 text-center text-sm text-muted-foreground">Select your authentication factors</p>
+            <div className="mb-8 grid grid-cols-3 gap-3">
               {(Object.keys(MODALITY_META) as Array<keyof typeof MODALITY_META>).map((modality) => (
                 <ModalityChip key={modality} modality={modality} selected={selected.includes(modality)} onToggle={() => toggle(modality)} />
               ))}
             </div>
-            <div className="mb-6">
-              <SecurityStrengthMeter modalities={selected} />
-            </div>
             <button
               disabled={selected.length === 0}
               onClick={() => setPhase('capture')}
-              className="w-full rounded-lg bg-primary py-3 font-mono text-sm tracking-wide text-primary-foreground uppercase shadow-[0_0_24px_color-mix(in_srgb,var(--color-primary)_40%,transparent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+              className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
             >
               Begin Capture ({selected.length} factor{selected.length === 1 ? '' : 's'})
             </button>
@@ -178,7 +177,7 @@ export function AuthenticatePage() {
             <button
               onClick={handleSubmit}
               disabled={!allCaptured}
-              className="w-full rounded-lg bg-primary py-3 font-mono text-sm tracking-wide text-primary-foreground uppercase shadow-[0_0_24px_color-mix(in_srgb,var(--color-primary)_40%,transparent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+              className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
             >
               Submit for Verification
             </button>
@@ -187,11 +186,9 @@ export function AuthenticatePage() {
 
         {phase === 'processing' && (
           <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto max-w-md">
-            <div className="mb-6 text-center">
-              <span className="font-mono text-3xl font-semibold tracking-wider text-primary">
-                {(elapsedMs / 1000).toFixed(2)}s
-              </span>
-              <p className="font-mono text-[9px] tracking-wider text-muted-foreground uppercase">Live processing timer</p>
+            <div className="mb-8 text-center">
+              <span className="text-4xl font-semibold tracking-tight text-foreground">{(elapsedMs / 1000).toFixed(2)}s</span>
+              <p className="mt-1 text-xs text-muted-foreground">Elapsed time</p>
             </div>
             <div className="space-y-2.5">
               {steps.map((s, i) => {
@@ -203,17 +200,17 @@ export function AuthenticatePage() {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 ${
-                      done ? 'border-success/30 bg-success/5' : active ? 'border-primary/40 bg-primary/5' : 'border-border bg-card/30'
+                      done ? 'border-success/25 bg-success/5' : active ? 'border-primary/30 bg-primary/5' : 'border-border bg-card/30'
                     }`}
                   >
                     {done ? (
-                      <Check className="h-4 w-4 shrink-0 text-success" />
+                      <Check className="h-4 w-4 shrink-0 text-success" strokeWidth={1.5} />
                     ) : active ? (
-                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.9, repeat: Infinity, ease: 'linear' }}>
-                        <s.icon className="h-4 w-4 shrink-0 text-primary" />
+                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}>
+                        <s.icon className="h-4 w-4 shrink-0 text-primary" strokeWidth={1.5} />
                       </motion.div>
                     ) : (
-                      <s.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <s.icon className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
                     )}
                     <span className={`text-sm ${done ? 'text-success' : active ? 'text-foreground' : 'text-muted-foreground'}`}>
                       {s.label}
@@ -227,13 +224,13 @@ export function AuthenticatePage() {
 
         {phase === 'error' && (
           <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto max-w-md text-center">
-            <div className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-danger/40 bg-danger/10 p-4 text-sm text-danger">
-              <AlertCircle className="h-4 w-4 shrink-0" />
+            <div className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+              <AlertCircle className="h-4 w-4 shrink-0" strokeWidth={1.5} />
               {errorMessage}
             </div>
             <button
               onClick={() => setPhase('capture')}
-              className="rounded-lg border border-border px-6 py-2.5 font-mono text-xs tracking-wide text-foreground uppercase hover:border-primary/50"
+              className="rounded-lg border border-border px-6 py-2.5 text-sm font-medium text-foreground hover:border-white/25"
             >
               Back to Capture
             </button>

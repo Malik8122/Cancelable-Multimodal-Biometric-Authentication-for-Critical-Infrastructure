@@ -2,7 +2,6 @@ import { motion, AnimatePresence } from 'motion/react'
 import { Camera, RotateCcw, ScanFace, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
-import { GlowingEffect } from '../ui/glowing-effect'
 
 interface Props {
   mode: 'register' | 'verify'
@@ -60,38 +59,34 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
   }
 
   return (
-    <div className="relative rounded-2xl border border-border bg-card/60 p-6 backdrop-blur">
-      <GlowingEffect disabled={false} proximity={80} spread={30} borderWidth={2} />
-      <div className="relative mb-4 flex items-center gap-2 text-muted-foreground">
-        <ScanFace className="h-4 w-4 text-primary" />
-        <span className="font-mono text-xs tracking-[0.15em] uppercase">
-          {mode === 'register' ? 'Face Registration' : 'Verify Face'}
-        </span>
+    <div className="rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-2.5 text-foreground">
+        <ScanFace className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
+        <span className="text-sm font-medium">{mode === 'register' ? 'Face Capture' : 'Verify Face'}</span>
       </div>
 
-      <div className="relative mb-4 aspect-video overflow-hidden rounded-xl border border-border bg-black">
+      <div className="mb-4 aspect-video overflow-hidden rounded-xl border border-border bg-black/40">
         {previewUrl ? (
           <img src={previewUrl} alt="Captured face" className="h-full w-full object-cover" />
         ) : streamActive ? (
-          <>
+          <div className="relative h-full w-full">
             <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-            {/* Face bounding box + scanning grid overlay */}
+            {/* Minimal scanner corners */}
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="relative h-[70%] w-[60%]">
-                <div className="absolute -inset-2 rounded-2xl border-2 border-primary/50" />
                 {(['-top-1 -left-1', '-top-1 -right-1', '-bottom-1 -left-1', '-bottom-1 -right-1'] as const).map(
                   (pos) => (
                     <div
                       key={pos}
-                      className={`absolute ${pos} h-4 w-4 border-primary ${pos.includes('top') ? 'border-t-2' : 'border-b-2'} ${pos.includes('left') ? 'border-l-2' : 'border-r-2'}`}
+                      className={`absolute ${pos} h-5 w-5 border-white/60 ${pos.includes('top') ? 'border-t' : 'border-b'} ${pos.includes('left') ? 'border-l' : 'border-r'}`}
                     />
                   ),
                 )}
                 {!reducedMotion && (
                   <motion.div
-                    className="absolute inset-x-0 h-px bg-primary shadow-[0_0_10px_var(--color-primary)]"
+                    className="absolute inset-x-0 h-px bg-white/40"
                     animate={{ y: ['0%', '100%', '0%'] }}
-                    transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}
+                    transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
                   />
                 )}
               </div>
@@ -106,41 +101,40 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
                 />
               )}
             </AnimatePresence>
-          </>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-            {cameraError ?? 'Initializing optical sensor array...'}
+            {cameraError ?? 'Preparing camera...'}
           </div>
         )}
       </div>
 
-      <p className="relative mb-4 text-[11px] leading-relaxed text-muted-foreground">
-        Position your face inside the frame &middot; ensure good lighting &middot; remove glasses if possible.
+      <p className="mb-5 text-[13px] leading-relaxed text-muted-foreground">
+        Position your face inside the frame, ensure good lighting, and remove glasses if possible.
       </p>
 
-      <div className="relative flex gap-2">
+      <div className="flex gap-2.5">
         {previewUrl ? (
           <button
             onClick={retake}
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-muted py-2.5 font-mono text-xs tracking-wide text-foreground uppercase transition-colors hover:border-primary/50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border py-2.5 text-sm font-medium text-foreground transition-colors hover:border-white/25"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
+            <RotateCcw className="h-4 w-4" strokeWidth={1.5} />
             Retake
           </button>
         ) : (
-          <motion.button
+          <button
             onClick={capture}
             disabled={disabled || !streamActive}
-            whileTap={disabled || !streamActive ? undefined : { scale: 0.96 }}
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-2.5 font-mono text-xs tracking-wide text-primary-foreground uppercase shadow-[0_0_20px_color-mix(in_srgb,var(--color-primary)_40%,transparent)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-sm font-medium text-primary-foreground shadow-md shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
           >
-            <Camera className="h-3.5 w-3.5" />
+            <Camera className="h-4 w-4" strokeWidth={1.5} />
             Capture
-          </motion.button>
+          </button>
         )}
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 font-mono text-xs tracking-wide text-muted-foreground uppercase transition-colors hover:border-primary/50 hover:text-foreground">
-          <Upload className="h-3.5 w-3.5" />
-          Upload
+        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-white/25 hover:text-foreground">
+          <Upload className="h-4 w-4" strokeWidth={1.5} />
+          Upload Instead
           <input
             type="file"
             accept={ACCEPTED.join(',')}
@@ -150,9 +144,7 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
           />
         </label>
       </div>
-      <p className="relative mt-2 text-center font-mono text-[9px] tracking-wider text-muted-foreground/70 uppercase">
-        Accepted formats: JPG &middot; JPEG &middot; PNG
-      </p>
+      <p className="mt-3 text-center text-xs text-muted-foreground/70">Accepted formats: PNG &bull; JPG &bull; JPEG</p>
     </div>
   )
 }
