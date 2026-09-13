@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { Fingerprint, Mic, ScanFace } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -63,9 +64,13 @@ export function BuildingSecurityPage() {
             const isSelected = selected.includes(modality)
             const isEnrolled = enrolled?.includes(modality)
             return (
-              <button
+              <motion.button
                 key={modality}
                 onClick={() => toggle(modality)}
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.95 }}
+                animate={isSelected ? { scale: [1, 1.06, 1] } : { scale: 1 }}
+                transition={{ duration: 0.25 }}
                 className={`flex flex-col items-center gap-2 rounded-md border p-4 transition-colors ${
                   isSelected
                     ? 'border-accent bg-accent/10 text-accent'
@@ -77,19 +82,21 @@ export function BuildingSecurityPage() {
                 <span className="font-mono text-[9px] tracking-wide text-text-dim uppercase">
                   {isEnrolled === undefined ? '...' : isEnrolled ? 'enrolled' : 'first use'}
                 </span>
-              </button>
+              </motion.button>
             )
           })}
         </div>
       </div>
 
-      <button
+      <motion.button
         disabled={selected.length === 0}
         onClick={() => navigate(`/building/${building.id}/authenticate`, { state: { modalities: selected } })}
+        whileHover={selected.length > 0 ? { scale: 1.015 } : undefined}
+        whileTap={selected.length > 0 ? { scale: 0.98 } : undefined}
         className="mb-6 w-full rounded-md bg-accent py-3 font-mono text-sm tracking-wide text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
       >
         Begin Authentication ({selected.length} factor{selected.length === 1 ? '' : 's'})
-      </button>
+      </motion.button>
 
       <PrivacyIndicator />
     </div>

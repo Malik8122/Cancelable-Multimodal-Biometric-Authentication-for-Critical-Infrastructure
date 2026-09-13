@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import type { FusionAuthenticateResponse, Modality } from '../api/types'
 import { AuthenticationLog } from '../components/AuthenticationLog'
@@ -6,6 +7,7 @@ import { PrivacyIndicator } from '../components/PrivacyIndicator'
 import { ScoreCard } from '../components/ScoreCard'
 import { getBuilding } from '../config/buildings'
 import { useSession } from '../context/SessionContext'
+import { useReducedMotion } from '../hooks/useReducedMotion'
 
 export function ResultPage() {
   const { buildingId } = useParams<{ buildingId: string }>()
@@ -13,6 +15,7 @@ export function ResultPage() {
   const { log } = useSession()
   const building = buildingId ? getBuilding(buildingId) : undefined
   const result = location.state?.result
+  const reducedMotion = useReducedMotion()
 
   if (!building || !result) {
     return (
@@ -26,6 +29,7 @@ export function ResultPage() {
   }
 
   const buildingLog = log.filter((entry) => entry.buildingId === building.id)
+  const tailDelay = reducedMotion ? 0 : 0.9
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-12">
@@ -35,34 +39,48 @@ export function ResultPage() {
 
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {(Object.entries(result.results) as [Modality, (typeof result.results)[Modality]][]).map(
-          ([modality, modalityResult]) =>
-            modalityResult && <ScoreCard key={modality} modality={modality} result={modalityResult} />,
+          ([modality, modalityResult], index) =>
+            modalityResult && (
+              <ScoreCard key={modality} modality={modality} result={modalityResult} index={index} />
+            ),
         )}
       </div>
 
-      <div className="mb-8 flex gap-3">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: tailDelay, duration: 0.4 }}
+        className="mb-8 flex gap-3"
+      >
         <Link
           to={`/building/${building.id}`}
-          className="flex-1 rounded-md border border-border py-2.5 text-center font-mono text-xs tracking-wide text-text-muted uppercase transition-colors hover:border-border-bright hover:text-text"
+          className="flex-1 scale-100 rounded-md border border-border py-2.5 text-center font-mono text-xs tracking-wide text-text-muted uppercase transition-all hover:scale-[1.02] hover:border-border-bright hover:text-text active:scale-[0.98]"
         >
           Try again
         </Link>
         <Link
           to="/"
-          className="flex-1 rounded-md border border-border py-2.5 text-center font-mono text-xs tracking-wide text-text-muted uppercase transition-colors hover:border-border-bright hover:text-text"
+          className="flex-1 scale-100 rounded-md border border-border py-2.5 text-center font-mono text-xs tracking-wide text-text-muted uppercase transition-all hover:scale-[1.02] hover:border-border-bright hover:text-text active:scale-[0.98]"
         >
           Facility list
         </Link>
-      </div>
+      </motion.div>
 
-      <div className="mb-6 rounded-lg border border-border bg-panel p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: tailDelay + 0.1, duration: 0.4 }}
+        className="mb-6 rounded-lg border border-border bg-panel p-4"
+      >
         <p className="mb-3 font-mono text-[10px] tracking-wider text-text-dim uppercase">
           Security audit - this facility (session log)
         </p>
         <AuthenticationLog entries={buildingLog} />
-      </div>
+      </motion.div>
 
-      <PrivacyIndicator />
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: tailDelay + 0.2, duration: 0.4 }}>
+        <PrivacyIndicator />
+      </motion.div>
     </div>
   )
 }

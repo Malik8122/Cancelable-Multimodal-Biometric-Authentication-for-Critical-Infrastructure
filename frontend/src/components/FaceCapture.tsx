@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Camera, ScanFace, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useReducedMotion } from '../hooks/useReducedMotion'
@@ -12,6 +12,7 @@ export function FaceCapture({ onCapture, disabled }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [streamActive, setStreamActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [flash, setFlash] = useState(false)
   const reducedMotion = useReducedMotion()
 
   useEffect(() => {
@@ -39,6 +40,8 @@ export function FaceCapture({ onCapture, disabled }: Props) {
     canvas.toBlob((blob) => {
       if (blob) onCapture(blob, 'face.png')
     }, 'image/png')
+    setFlash(true)
+    window.setTimeout(() => setFlash(false), 250)
   }
 
   const handleFile = (file: File) => onCapture(file, file.name)
@@ -61,6 +64,16 @@ export function FaceCapture({ onCapture, disabled }: Props) {
                 transition={{ duration: 2.4, repeat: Infinity, ease: 'linear' }}
               />
             )}
+            <AnimatePresence>
+              {flash && (
+                <motion.div
+                  initial={{ opacity: 0.9 }}
+                  animate={{ opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="pointer-events-none absolute inset-0 bg-white"
+                />
+              )}
+            </AnimatePresence>
           </>
         ) : (
           <div className="flex h-full items-center justify-center text-xs text-text-dim">
@@ -70,14 +83,15 @@ export function FaceCapture({ onCapture, disabled }: Props) {
       </div>
 
       <div className="flex gap-2">
-        <button
+        <motion.button
           onClick={capture}
           disabled={disabled || !streamActive}
+          whileTap={disabled || !streamActive ? undefined : { scale: 0.96 }}
           className="flex flex-1 items-center justify-center gap-2 rounded-md bg-accent py-2 font-mono text-xs tracking-wide text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
         >
           <Camera className="h-3.5 w-3.5" />
           Capture
-        </button>
+        </motion.button>
         <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 font-mono text-xs tracking-wide text-text-muted uppercase transition-colors hover:border-border-bright hover:text-text">
           <Upload className="h-3.5 w-3.5" />
           File

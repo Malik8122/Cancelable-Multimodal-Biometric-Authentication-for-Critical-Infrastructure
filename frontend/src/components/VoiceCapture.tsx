@@ -41,9 +41,22 @@ export function VoiceCapture({ onCapture, disabled }: Props) {
       <div className="mb-4 flex items-center gap-2 text-text-muted">
         <Mic className="h-4 w-4" />
         <span className="font-mono text-xs tracking-wider uppercase">Voice</span>
+        {isRecording && (
+          <motion.span
+            className="ml-auto flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-danger uppercase"
+            animate={reducedMotion ? undefined : { opacity: [1, 0.4, 1] }}
+            transition={{ duration: 1, repeat: Infinity }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+            Rec
+          </motion.span>
+        )}
       </div>
 
-      <div className="mb-4 flex aspect-video items-center justify-center gap-1 rounded-md border border-border-bright bg-void">
+      <motion.div
+        className="mb-4 flex aspect-video items-center justify-center gap-1 rounded-md border bg-void"
+        animate={{ borderColor: isRecording ? 'rgba(248, 113, 113, 0.5)' : '#2c3948' }}
+      >
         {Array.from({ length: BAR_COUNT }).map((_, i) => (
           <motion.div
             key={i}
@@ -56,28 +69,30 @@ export function VoiceCapture({ onCapture, disabled }: Props) {
             transition={{ duration: 0.5 + (i % 5) * 0.08, repeat: isRecording ? Infinity : 0 }}
           />
         ))}
-      </div>
+      </motion.div>
 
       {error && <p className="mb-3 text-xs text-danger">{error}</p>}
 
       <div className="flex gap-2">
         {!isRecording ? (
-          <button
+          <motion.button
             onClick={handleStart}
             disabled={disabled || state === 'processing'}
+            whileTap={disabled || state === 'processing' ? undefined : { scale: 0.96 }}
             className="flex flex-1 items-center justify-center gap-2 rounded-md bg-accent py-2 font-mono text-xs tracking-wide text-void uppercase transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
           >
             <Mic className="h-3.5 w-3.5" />
             {state === 'processing' ? 'Processing...' : 'Record'}
-          </button>
+          </motion.button>
         ) : (
-          <button
+          <motion.button
             onClick={handleStop}
+            whileTap={{ scale: 0.96 }}
             className="flex flex-1 items-center justify-center gap-2 rounded-md bg-danger py-2 font-mono text-xs tracking-wide text-void uppercase transition-opacity hover:opacity-90"
           >
             <Square className="h-3.5 w-3.5" />
             Stop ({seconds}s)
-          </button>
+          </motion.button>
         )}
         <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 font-mono text-xs tracking-wide text-text-muted uppercase transition-colors hover:border-border-bright hover:text-text">
           <Upload className="h-3.5 w-3.5" />

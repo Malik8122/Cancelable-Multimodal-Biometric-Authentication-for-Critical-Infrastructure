@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom'
 import type { Building } from '../config/buildings'
 import type { Modality } from '../api/types'
 
+const MotionLink = motion.create(Link)
+
 const MODALITY_ICON: Record<Modality, typeof ScanFace> = {
   face: ScanFace,
   fingerprint: Fingerprint,
@@ -24,8 +26,11 @@ export function BuildingCard({ building, index }: { building: Building; index: n
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.08, duration: 0.4 }}
     >
-      <Link
+      <MotionLink
         to={`/building/${building.id}`}
+        whileHover={{ y: -4, boxShadow: '0 12px 32px -8px rgba(34, 211, 238, 0.25)' }}
+        whileTap={{ y: 0, scale: 0.98 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 25 }}
         className="group block rounded-lg border border-border bg-panel p-6 transition-colors hover:border-accent/50 hover:bg-panel-raised"
       >
         <div className="mb-4 flex items-start justify-between">
@@ -47,7 +52,7 @@ export function BuildingCard({ building, index }: { building: Building; index: n
             })}
           </div>
         </div>
-      </Link>
+      </MotionLink>
     </motion.div>
   )
 }
