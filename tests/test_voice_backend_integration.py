@@ -159,6 +159,53 @@ def test_recapture_with_small_noise_is_no_longer_catastrophically_unstable(clien
     assert body["score"] > 0.5, f"genuine recapture score collapsed to {body['score']} - the trim_silence bug may have regressed"
 
 
+def test_genuine_recapture_authenticates_with_the_calibrated_threshold(client):
+    """Now that evaluation/results/voice_threshold.json exists (a real,
+    same-key, ROC-anchored calibration - see
+    docs/AUTHENTICATION_RELIABILITY_REPORT.md and
+    scripts/calibrate_protected_thresholds.py), a genuine second capture with
+    a realistic amount of variation should not just be "stable" (the
+    previous test's claim) but should actually clear the real threshold and
+    authenticate - the actual "genuine user must authenticate successfully"
+    requirement this reliability sprint set out to satisfy for voice.
+
+    Uses a broadband, envelope-shaped noise signal rather than a pure tone -
+    a pure sine wave is spectrally sparse in a way this real ECAPA-TDNN model
+    handles unpredictably (see scripts/calibrate_protected_thresholds.py's
+    and docs/AUTHENTICATION_RELIABILITY_REPORT.md's investigation notes);
+    broadband noise is a fairer, more speech-like stand-in.
+    """
+    pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
+    pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")
+    from scipy.signal import butter, lfilter
+
+    sr = SAMPLE_RATE
+    t = np.linspace(0, 4.0, sr * 4, endpoint=False)
+    b, a = butter(4, [300 / (sr / 2), 3400 / (sr / 2)], btype="band")
+    rng = np.random.default_rng(7)
+    base = lfilter(b, a, rng.standard_normal(len(t))).astype(np.float32)
+    envelope = (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t)).astype(np.float32)
+    base = base * envelope
+    base = (base / np.std(base) * 0.1).astype(np.float32)
+    recaptured = base + np.random.default_rng(8).normal(scale=0.01 * np.std(base), size=base.shape).astype(np.float32)
+
+    enroll_response = client.post(
+        "/enroll",
+        data={"user_id": "U-VOICE-GENUINE", "modality": "voice", "application_id": APPLICATION_ID},
+        files={"image": ("sample.wav", _encode_wav(base), "audio/wav")},
+    )
+    assert enroll_response.status_code == 200
+
+    verify_response = client.post(
+        "/verify/voice",
+        data={"user_id": "U-VOICE-GENUINE", "application_id": APPLICATION_ID},
+        files={"image": ("recapture.wav", _encode_wav(recaptured), "audio/wav")},
+    )
+    assert verify_response.status_code == 200
+    body = verify_response.json()
+    assert body["authenticated"] is True, f"genuine recapture (score={body['score']}, threshold={body['threshold']}) was denied"
+
+
 def test_verify_voice_without_enrollment_returns_not_authenticated(client):
     pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
     pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")

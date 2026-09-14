@@ -1,8 +1,18 @@
-"""Calibrate protected-template (BioHash Hamming-similarity) thresholds for
-fingerprint and voice, anchored to real operating points read off each
-modality's actual ROC curve (evaluation/results/<modality>_roc.csv, from
-real Kaggle test-set evaluation) - not a guess, and not the EER crossover
-either (see below for why).
+"""Calibrate a protected-template (BioHash Hamming-similarity) threshold for
+voice, anchored to real operating points read off its actual ROC curve
+(evaluation/results/voice_roc.csv, from real Kaggle test-set evaluation) -
+not a guess, and not the EER crossover either (see below for why).
+
+Voice only: fingerprint and face already authenticate genuine users
+reliably at the existing Settings.match_threshold=0.9 fallback (see
+docs/AUTHENTICATION_RELIABILITY_REPORT.md's "Before vs after" section) -
+recalibrating fingerprint would only ever lower its impostor resistance for
+zero genuine-acceptance benefit. This module's fingerprint-anchoring
+machinery is kept generic (it takes `modality`/`embedding_dim` as
+parameters) in case fingerprint ever needs real recalibration later, but
+`main()` below only invokes it for voice, and applying this threshold
+change was an explicit, disclosed, user-approved decision - see the report
+for the exact tradeoff (far/frr) accepted.
 
 Background (see docs/AUTHENTICATION_RELIABILITY_REPORT.md for the full
 writeup): the backend was falling back to Settings.match_threshold=0.9 for
@@ -228,19 +238,23 @@ def calibrate(modality: str, embedding_dim: int, *, genuine_max_far: float) -> d
 
 
 def main() -> None:
-    # 5% FAR: a security-conscious real operating point (not the EER
-    # crossover, which for fingerprint's real 30.77% EER would mean roughly
-    # a third of impostor attempts get through - too weak a security
-    # posture; see this module's docstring).
-    for modality, embedding_dim in [("fingerprint", 512), ("voice", 192)]:
+    # Voice only: fingerprint and face already authenticate genuine users
+    # reliably at the existing Settings.match_threshold=0.9 fallback (see
+    # docs/AUTHENTICATION_RELIABILITY_REPORT.md's "Before vs after" section)
+    # - recalibrating fingerprint would only ever lower its impostor
+    # resistance for zero genuine-acceptance benefit, so it (and face,
+    # which has no ROC curve to anchor to anyway) are deliberately left
+    # untouched. This is an explicit, reviewed, user-approved change to
+    # voice's threshold only - see docs/AUTHENTICATION_RELIABILITY_REPORT.md.
+    for modality, embedding_dim in [("voice", 192)]:
         summary = calibrate(modality, embedding_dim, genuine_max_far=0.05)
         print(
             f"{modality}: threshold={summary['threshold']:.4f}  eer={summary['eer']:.4f}  "
             f"far={summary['far']:.4f}  frr={summary['frr']:.4f}  auc={summary['auc']:.4f}  "
             f"({summary['num_genuine_pairs']} genuine / {summary['num_impostor_pairs']} impostor pairs)"
         )
-    print("\nWrote evaluation/results/{fingerprint,voice}_threshold.json + _protected_metrics.csv")
-    print("Face intentionally left uncalibrated (no real operating-point measurement to anchor to; already works at the 0.9 fallback).")
+    print("\nWrote evaluation/results/voice_threshold.json + voice_protected_metrics.csv")
+    print("Fingerprint and face intentionally left uncalibrated - both already work reliably at the 0.9 fallback.")
 
 
 if __name__ == "__main__":
