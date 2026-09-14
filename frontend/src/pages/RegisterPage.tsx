@@ -147,12 +147,12 @@ export function RegisterPage() {
   const currentProgressIndex = step === 'capture' ? activeIndex : stepLabels.length - 1
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-14">
+    <div className="mx-auto max-w-3xl px-6 pt-6 pb-14">
       <p className="mb-2 text-center text-xs font-medium tracking-wide text-muted-foreground">{building.name}</p>
-      <h1 className="mb-10 text-center text-2xl font-semibold tracking-tight text-foreground">Register Biometrics</h1>
+      <h1 className="mb-6 text-center text-2xl font-semibold tracking-tight text-foreground">Register Biometrics</h1>
 
       {step !== 'select' && (
-        <div className="mb-12">
+        <div className="mb-8">
           <Stepper steps={stepLabels} currentIndex={currentProgressIndex} />
         </div>
       )}

@@ -49,7 +49,7 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
   const reRecord = () => setCaptured(false)
 
   return (
-    <div className="rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-xl">
+    <div className="rounded-2xl border border-border bg-card/60 p-5 backdrop-blur-xl">
       <div className="mb-4 flex items-center justify-between text-foreground">
         <div className="flex items-center gap-2.5">
           <Mic className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
@@ -67,13 +67,13 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
         )}
       </div>
 
-      <div className="mb-4 rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
-        <p className="text-xs text-muted-foreground">Speak this phrase</p>
-        <p className="mt-1.5 text-base text-foreground italic">&ldquo;{ENROLLMENT_PHRASE}&rdquo;</p>
+      <div className="mb-3 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2">
+        <p className="text-[11px] text-muted-foreground">Speak this phrase</p>
+        <p className="text-sm text-foreground italic">&ldquo;{ENROLLMENT_PHRASE}&rdquo;</p>
       </div>
 
       <motion.div
-        className="mb-4 flex aspect-video items-center justify-center gap-1 rounded-xl border bg-black/40"
+        className="mb-4 flex h-20 items-center justify-center gap-1 rounded-xl border bg-black/40"
         animate={{ borderColor: isRecording ? 'var(--color-danger)' : 'var(--color-border)' }}
       >
         {Array.from({ length: BAR_COUNT }).map((_, i) => (

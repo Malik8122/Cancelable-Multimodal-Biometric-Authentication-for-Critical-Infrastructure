@@ -56,7 +56,7 @@ export function FingerprintCapture({ mode, onCapture, disabled }: Props) {
   const retake = () => setPreviewUrl(null)
 
   return (
-    <div className="rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-xl">
+    <div className="rounded-2xl border border-border bg-card/60 p-5 backdrop-blur-xl">
       <div className="mb-4 flex items-center gap-2.5 text-foreground">
         <Fingerprint className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
         <span className="text-sm font-medium">{mode === 'register' ? 'Fingerprint Capture' : 'Verify Fingerprint'}</span>

@@ -59,7 +59,7 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-card/60 p-6 backdrop-blur-xl">
+    <div className="rounded-2xl border border-border bg-card/60 p-5 backdrop-blur-xl">
       <div className="mb-4 flex items-center gap-2.5 text-foreground">
         <ScanFace className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
         <span className="text-sm font-medium">{mode === 'register' ? 'Face Capture' : 'Verify Face'}</span>

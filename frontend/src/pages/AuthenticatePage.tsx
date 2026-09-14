@@ -141,8 +141,8 @@ export function AuthenticatePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-14">
-      <div className="mb-12 flex flex-col items-center gap-2 text-center">
+    <div className="mx-auto max-w-4xl px-6 pt-4 pb-14">
+      <div className="mb-3 flex flex-col items-center gap-1.5 text-center">
         <span className="text-xs font-medium tracking-wide text-muted-foreground">Identity Verification Portal</span>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{building.name}</h1>
         <ClearanceBadge level={building.clearanceLevel} />
@@ -169,7 +169,7 @@ export function AuthenticatePage() {
 
         {phase === 'capture' && (
           <motion.div key="capture" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="mb-3 grid grid-cols-1 gap-4 md:grid-cols-3">
               {selected.includes('face') && <FaceCapture mode="verify" onCapture={handleCapture('face')} />}
               {selected.includes('fingerprint') && <FingerprintCapture mode="verify" onCapture={handleCapture('fingerprint')} />}
               {selected.includes('voice') && <VoiceCapture mode="verify" onCapture={handleCapture('voice')} />}
