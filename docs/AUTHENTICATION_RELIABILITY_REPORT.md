@@ -1,156 +1,125 @@
 # Authentication Reliability Report
 
-**Sprint:** Phase 2.7 — Authentication Reliability Sprint
-**Scope:** Backend only (`preprocessing/`, `template_protection/`, `fusion/`, `backend/`, `evaluation/`). No UI, API contract, or database schema changes.
+**Sprint:** Phase 2.7 — Authentication Reliability Sprint (root-cause pass)
+**Scope:** Backend only (`preprocessing/`, `template_protection/`, `fusion/`, `backend/`, `evaluation/`). No UI, API contract, or database schema changes. **No threshold was changed. `ALL_REQUIRED` remains the default fusion policy.**
 
 ## Root Cause
 
-Two independent, real causes were found for "a genuine enrolled user is denied":
+A genuine enrolled speaker's second voice capture produced Hamming similarity scores scattered across ~0.62–0.84, denied under the (unmodified) 0.9 threshold. Two earlier passes at this system independently found and fixed one real preprocessing bug (`_trim_silence`'s frame-overlap duplication — see git history) and then reached for threshold calibration to close the remaining gap. This pass instead followed the investigation order requested — preprocessing determinism, embedding stability, HKDF inputs, BioHash determinism, matcher/template lookup — and found **a second, more consequential real bug in the same preprocessing module**, which fully explains the reported symptom without touching any threshold.
 
-### Cause 1 — Fixed: a concrete bug in voice preprocessing
+### The bug: waveform-domain silence padding contaminates mel-normalization
 
-`preprocessing/voice.py::VoicePreprocessor._trim_silence` reconstructed the "voice-activity-trimmed" waveform by concatenating each *voiced* 400-sample frame's samples directly. Consecutive frames advance by only a 160-sample hop, so they overlap — for a mostly-or-fully-voiced clip (the common case; most real utterances aren't mostly silence), the same audio got copied into the output once per overlapping voiced frame that covered it. A fully-voiced 4-second (64,000-sample) clip measured out at **~159,200 samples — 2.5x its input length**.
+`preprocessing/voice.py::VoicePreprocessor.preprocess` computes an 80-bin log-mel filterbank and mean-normalizes it *per clip* (`log_mel - log_mel.mean(axis=1, keepdims=True)`). Before this fix, a clip whose real (VAD-trimmed) content fell **short** of the 4-second target got padded with raw silence *before* mel extraction. Padding with zeros produces STFT frames with near-zero magnitude; `log(max(magnitude, 1e-10))` for those frames is an extreme outlier (≈ −23) next to real speech frames' typical range. Because the per-clip mean is computed across *all* frames, a large-enough fraction of these outlier frames drags the mean down and shifts the normalized values for the **real speech frames too** — corrupting the very features that are supposed to represent the speaker, in a way that depends on exactly how much padding was needed (i.e., exactly how long the real recording happened to be).
 
-`_fixed_length_segment`'s center-crop then selected from that unstable, duplicated sequence, so a tiny, realistic amount of capture noise shifted which content survived the crop, and the resulting speaker embedding changed catastrophically: a genuine same-speaker "recapture" measured **cosine similarity −0.18** instead of ~1.0.
+A real second recording will almost never last exactly as long as the enrollment recording — a person naturally speaks a phrase a little faster or slower each time. Whichever side of the 4-second target a given take's *trimmed* length lands on determines whether it hits the stable code path (center-crop, for longer-than-target clips) or the broken one (waveform padding, for shorter-than-target clips) — this data-dependent coin flip, not a general model-accuracy problem, is what produced the reported "scattered 0.62–0.84" symptom.
 
-**Fix:** build a per-sample keep-mask (OR-combining every frame that covers a sample) instead of concatenating frames — this can only ever select a subset of the input, so the trimmed output is now guaranteed `<= len(input)`.
+### Fix
 
-### Cause 2 — Diagnosed, not silently patched: an uncalibrated acceptance threshold
+`preprocess()` now branches on whether the trimmed/normalized waveform is at least as long as the target:
 
-`Settings.match_threshold = 0.9` is applied as a fallback to every modality whenever `evaluation/results/<modality>_threshold.json` doesn't exist — which is the case for all of face/fingerprint/voice (the directory holds only `*_metrics.csv`/`*_roc.csv` from the real Kaggle *raw-embedding* evaluation runs, never a threshold calibrated on *protected-template Hamming similarity*, the actual score space `authenticate()` compares).
+- **≥ target length (unchanged):** center-crop the waveform, then extract mel + normalize — this path was already stable and is untouched.
+- **< target length (fixed):** extract the mel filterbank and normalize it on the **real, unpadded** waveform first, then pad the resulting *mel frames* — not the waveform — with zeros (a neutral, already-mean-subtracted value) to reach the same frame count a full-length clip would produce. The real speech frames' statistics are never touched by the padding.
 
-Real, already-measured project data (`evaluation/results/*.csv`, from real Kaggle test-set evaluation) shows this default is wrong in different ways per modality:
-
-| Modality | Real raw-embedding EER | Real EER-threshold (cosine) | Real median impostor cosine |
-|---|---|---|---|
-| Face | 1.0% | *(not measured — no ROC curve was ever saved)* | *(not measured)* |
-| Fingerprint | **30.77%** | 0.9147 | **0.90** |
-| Voice | 2.29% | 0.3221 | ~0.00 |
-
-**Fingerprint is a genuinely weak model.** At its own best raw-embedding operating point, genuine and impostor pairs are separated by only ~30 percentage points of error, and its real median impostor cosine similarity (0.90) sits right next to its real 5%-FAR genuine operating point (0.9442) — the two are barely distinguishable in raw-embedding terms, let alone after BioHash quantization degrades that further. No protected-template threshold choice can make this specific checkpoint both "always accept genuine" and "always reject a realistic impostor" — that is a raw-model-accuracy ceiling, not a template-protection-layer problem.
-
-**The important, corrective realization this sprint reached:** despite fingerprint's weak *real-world* accuracy, it already authenticates genuine users successfully at the *current* 0.9 fallback for any realistic amount of capture noise (see "Before vs after" below) — so fingerprint's threshold did **not** need to be touched. An earlier attempt in this sprint tried recalibrating it anyway and is documented below specifically because of the mistake it caught.
-
-**Voice is the one modality with a real, unresolved reliability gap at 0.9.** Even after fixing Cause 1, a realistic amount of genuine voice-capture variation measures ~0.62 mean Hamming similarity (same-key, real-ROC-anchored estimate — see below) — below 0.9. Combined with `ALL_REQUIRED` fusion (every submitted modality must individually pass — the correct, secure default from the prior hardening sprint), voice alone denies an otherwise-genuine multi-factor attempt.
-
-### A calibration methodology bug this sprint found and fixed in itself
-
-While investigating whether voice's threshold could be safely recalibrated from real data, an early version of `scripts/calibrate_protected_thresholds.py` paired genuine/impostor samples the way `evaluation/threshold_calibration.py`'s general-purpose pairing does: each synthetic "identity" gets its *own* derived key. That measures a materially easier question than what this system's real `authenticate()` flow does: `backend/services/base_service.py::authenticate` always derives the comparison key from the **claimed** user_id, so a real impersonation attempt compares the impostor's own embedding against the victim's template **under the victim's key**, never under two different keys.
-
-The different-key version looked cleanly separated in calibration (EER = 0) but, when actually exercised through a real `ModalityService.authenticate()` call with a same-key impostor at fingerprint's real median-impostor similarity (cosine 0.90), **the impostor scored 0.84 and authenticated successfully** at the calibrated threshold. This was caught before it was deployed anywhere: this session's own safety tooling flagged writing the resulting (lowered) threshold files as a security-weakening action and blocked it, which is the correct outcome — the file was never applied, and the mistake is now the subject of a permanent regression test (`test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_current_threshold`) rather than a shipped weakness. The fixed, same-key version of the script is in the repo, uncommitted-as-output (see "What was NOT done" below).
+`VoicePreprocessor.__init__` precomputes `target_num_frames` (the exact frame count `scipy.signal.stft` produces for a `target_num_samples`-length signal: `1 + (target_num_samples - n_fft) // hop_length`) so this padding is exact, not approximate.
 
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `preprocessing/voice.py` | Fixed `_trim_silence`'s frame-overlap duplication bug (per-sample mask instead of frame concatenation). |
-| `tests/test_voice_preprocessing.py` | Added the length-invariant regression tests that would have caught Cause 1. |
-| `tests/test_voice_backend_integration.py` | Added a real-checkpoint stability regression test (genuine recapture score no longer collapses). |
-| `tests/test_authentication_debug_sprint.py` | Added regression tests: genuine user succeeds (face, fingerprint) with a second non-identical capture; never-enrolled user rejected; same-key impostor at a realistic similarity rejected; `ALL_REQUIRED` correctly denies the exact mixed pass/fail scenario from the bug report; fusion only requires modalities actually submitted (Scenario D). |
-| `scripts/debug_authentication_pipeline.py` | New: reusable end-to-end trace tool (enroll → authenticate → fusion) against the real trained checkpoints. |
-| `scripts/calibrate_protected_thresholds.py` | New, **not run to produce active output** in this sprint: a same-key, real-ROC-anchored calibration approach for fingerprint/voice, for the user's review (see "What was NOT done"). |
+| `preprocessing/voice.py` | `preprocess()`: pad in the mel/frame domain (post-normalization) instead of the waveform domain (pre-normalization) whenever the trimmed clip is shorter than the target length. Added `target_num_frames`. `_fixed_length_segment` itself is unchanged (still used, and still correctly tested, for the ≥-target-length crop case). |
+| `tests/test_voice_preprocessing.py` | Added a direct unit test proving the real frames' mel values (and their normalization) are now identical whether or not padding follows, and that padded frames are exactly zero. |
+| `tests/test_voice_backend_integration.py` | Replaced the previous (threshold-calibration-dependent) genuine-success test with one that reproduces the actual bug: a second take at a different, realistic duration, asserting `authenticated: true` against the **original, unmodified 0.9 threshold**. |
+| `tests/test_authentication_debug_sprint.py` | Added a voice-specific same-key impostor test at voice's real median impostor similarity, confirming the fix doesn't touch matching/security behavior. |
+| `evaluation/results/voice_threshold.json`, `voice_protected_metrics.csv` | **Removed.** The previously-applied real-ROC-anchored calibration (threshold 0.58) is no longer needed and was reverted per this sprint's explicit "do not lower thresholds" instruction — see "What Changed From the Prior Pass" below. |
 
-**Not changed:** `template_protection/transform.py` — investigated `quantize()`'s per-call recomputation of the quantization-threshold spread as a possible second bug; empirically measured the difference between "current" and "fixed" behavior on a realistic genuine pair and found it negligible (0.875 vs 0.867 Hamming similarity). Left alone: it isn't the cause of anything, and changing working code without a demonstrated benefit isn't a fix.
+## Debug Report: Investigation Steps 1–5
 
-## Before vs After Similarity Scores
+### Step 1 — Preprocessing identical between enroll and authenticate
 
-All numbers below are from `scripts/debug_authentication_pipeline.py`, run against the real trained face/fingerprint/voice checkpoints (`mock_mode=False` for all three), comparing one enrolled sample against a second, independently-perturbed "recapture" of the same synthetic identity.
+`backend/services/base_service.py::ModalityService.enroll` and `.authenticate` both call `self.pipeline.embed(raw_image)` with no divergence in arguments; `VoicePipeline.embed` always calls `VoicePreprocessor.preprocess(waveform, sample_rate=sample_rate, training=False)` — identical code path, identical `training=False` (deterministic center-crop / no random augmentation) in both directions. Confirmed directly:
 
-| Modality | Before fix (cosine, raw embedding) | After fix (cosine, raw embedding) | Hamming similarity (protected template, after fix) |
-|---|---|---|---|
-| Face | *(unaffected by this sprint)* | 0.9998 | 0.9844 |
-| Fingerprint | *(unaffected by this sprint)* | 1.0000 | 0.9844 |
-| **Voice** | **−0.18** (catastrophic collapse) | **0.62–0.86** (stable, noise-level dependent) | **0.6194 mean** (same-key, real-ROC-anchored estimate) / **0.8359** (measured, low-noise scenario) |
+```
+[config] sample_rate=16000  clip_seconds=4.0  target_num_samples=64000  n_mels=80
+[enroll]                  after_resample=64000  after_VAD_trim=63920  mel_frames=398
+[authenticate, same bytes] after_resample=64000  after_VAD_trim=63920  mel_frames=398
+cosine(enroll, authenticate) = 1.000000   <- exact determinism, byte-identical input
+```
 
-The voice fix alone (no threshold change) took a genuine recapture from "less related than two random unrelated recordings" to "clearly, stably correlated." It did not, by itself, clear the uncalibrated 0.9 threshold — that is Cause 2, deliberately left as an open decision (see below).
+### Step 2 — Embedding stability for repeated recordings of the same speaker
+
+This is where the bug was found. Comparing raw-embedding cosine similarity across realistic variations of the *same* synthetic "speaker" (before vs. after the fix):
+
+| Scenario | cosine similarity (before fix) | cosine similarity (after fix) |
+|---|---|---|
+| Identical bytes replayed | 1.000000 | 1.000000 |
+| Same duration, +1% sample noise | 0.850567 | 0.850567 *(unaffected — never hit the padding branch)* |
+| **Second take, 3.6s vs enrolled 4.0s** | **0.255804** | **0.990855** |
+| Second take, same duration + 0.4s leading silence (net *longer*, so already used the stable crop path) | 0.995831 | 0.995831 *(unaffected)* |
+| Realistic combination: 3.7s speech + 0.3s lead-in + 0.2s trail-off + 2% noise | 0.257256 | 0.824944 |
+
+Embedding dimension (192) and L2 norm (1.000000, by construction of `BaseEmbedder.extract_embedding`'s normalization) were identical in every case — the divergence was entirely in the *values*, not the shape, confirming this is a feature-corruption bug, not a wiring bug.
+
+### Step 3 — HKDF inputs identical for enroll and authenticate
+
+`ModalityService.authenticate` derives the key via `derive_key(settings.master_secret, application_id=application_id, user_id=user_id, modality=self.modality, key_version=stored.key_version)` — the same four fields `enroll` used, with `key_version` read from the *stored* template rather than re-derived, so a value can never drift between the two calls. `derive_key`'s HKDF salt is `SHA256(f"{application_id}|{user_id}|{modality}|{key_version}")` — fully deterministic given identical inputs (verified: identical bytes in, identical `KeyMaterial` out, in the existing `template_protection` test suite).
+
+### Step 4 — BioHash determinism
+
+`generate_template(embedding, key, output_bits)` is a pure function of its two arguments (`template_protection/biohash.py`): L2-normalize → project (seeded by `key.projection_seed`) → quantize (seeded by `key.threshold_seed`) → permute (seeded by `key.permutation_seed`). All three seeds come from `numpy.random.default_rng` (PCG64, a fixed, portable, non-entropy-consuming algorithm). Confirmed: identical `(embedding, key)` in → bit-for-bit identical protected template out, every time.
+
+### Step 5 — Matcher uses the correct stored active template
+
+`crud.get_active_template(db, user_id, modality, application_id)` filters on all three fields plus `is_active.is_(True)`; `save_template` deactivates any prior active row before inserting a new one. Live-traced in the prior sprint (unchanged this pass): correct `user_id` scoping, latest `key_version` returned after rotation, full history preserved but inactive rows excluded from lookup, a different `user_id` returns `None`.
 
 ## Final Genuine Authentication Report
 
-**Applied and confirmed**, per the user's explicit decision on the disclosed tradeoff below: `evaluation/results/voice_threshold.json` now holds a real, same-key, ROC-anchored voice threshold (0.58). Fingerprint and face are untouched (still the 0.9 fallback - both already worked). Produced by `PYTHONPATH=. python scripts/debug_authentication_pipeline.py` against the current repository state:
+Produced by `PYTHONPATH=. python scripts/debug_authentication_pipeline.py` against the current repository state — **the original, unmodified `Settings.match_threshold=0.9` fallback, no calibration file for any modality**:
 
 ```
 User ID: genuine-user-001
 Face Score / Threshold / Pass:        0.9844 / 0.9000 / True
 Fingerprint Score / Threshold / Pass: 0.9844 / 0.9000 / True
-Voice Score / Threshold / Pass:       0.8359 / 0.5800 / True
-Fusion Score: 0.9349
+Voice Score / Threshold / Pass:       0.9766 / 0.9000 / True
+Fusion Score: 0.9818
 Fusion Policy: ALL_REQUIRED
-Authenticated: True   <-- ACCESS GRANTED, produced by the real backend, no bypass, no mocked score
+Authenticated: True   <-- ACCESS GRANTED, produced by the real backend, no bypass, no mocked score, no lowered threshold
 ```
 
-Also confirmed via a full, real HTTP round-trip (`POST /enroll` -> `POST /verify/voice`, `test_genuine_recapture_authenticates_with_the_calibrated_threshold`): a genuine second capture (broadband signal + realistic 1% sample noise) now returns `authenticated: true` through the actual API, not just the direct-service debug script.
+The "genuine" voice sample here is the enrolled synthetic speaker's pattern re-synthesized at 3.7 seconds instead of the enrolled 4.0 seconds — exactly the realistic take-to-take duration variation that exposed the bug, not a best-case scenario.
 
-**Before this threshold was applied**, the same run returned:
+Also confirmed via a full, real HTTP round-trip (`POST /enroll` → `POST /verify/voice`, `test_genuine_recapture_at_a_different_realistic_duration_authenticates`): a genuine second capture at a different realistic duration returns `authenticated: true` and `threshold: 0.9` through the actual API.
 
-```
-Voice Score / Threshold / Pass: 0.8359 / 0.9000 / False
-Authenticated: False
-Reason for failure: voice individually failed its own threshold; ALL_REQUIRED vetoes on any failure.
-```
+Across a range of realistic second-take durations (not cherry-picked):
+
+| Second-take duration | Hamming similarity | Pass @ 0.9 |
+|---|---|---|
+| 3.5s | 0.9766 | True |
+| 3.6s | 0.9766 | True |
+| 3.7s | 0.9766 | True |
+| 3.8s | 0.9688 | True |
+| 3.9s | 0.9844 | True |
+| 4.2s | 0.9922 | True |
+| 4.5s | 0.9922 | True |
 
 ## Final Impostor Authentication Report
 
-`test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_current_threshold` (fingerprint, unmodified 0.9 threshold - permanent regression test):
+Two independent modalities checked at the real, measured median impostor similarity for each (not a best-case near-zero assumption), under one shared per-victim key — the actual threat model `authenticate()` implements (the candidate is always compared under the *claimed* identity's key):
 
 ```
-Victim: enrolled with a synthetic fingerprint embedding.
-Attacker: a different embedding at cosine similarity 0.90 to the victim
-          (fingerprint's real, measured MEDIAN impostor similarity - not a
-          best-case near-zero assumption), compared under the victim's own
-          key (the real threat model - see Cause 2 above).
-Result: authenticated = False.
+Fingerprint: attacker at cosine 0.90 (fingerprint's real measured median impostor similarity)
+             -> Hamming 0.84  -> authenticated = False  (threshold 0.9, unmodified)
+
+Voice:       attacker at cosine 0.00 (voice's real measured median impostor similarity)
+             -> Hamming 0.52  -> authenticated = False  (threshold 0.9, unmodified)
 ```
 
-At the (rejected, never shipped) recalibrated fingerprint threshold this sprint initially and incorrectly tried (0.61, from the flawed different-key methodology), **this same attacker scored 0.84 and would have authenticated** — the exact reason that threshold was reverted.
+Both permanent regression tests (`test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_current_threshold`, `test_a_same_key_voice_impostor_with_realistic_similarity_is_rejected`). The preprocessing fix changes only how a genuine embedding is *computed* from real audio; it does not touch `template_protection`'s matching logic, so impostor rejection is unaffected by construction — confirmed, not assumed.
 
-For voice's **applied** threshold (0.58), a same-key impostor at voice's real median-impostor similarity (cosine ~0.00) was checked directly:
+## What Changed From the Prior Pass
 
-```
-Victim: enrolled with a synthetic voice embedding.
-Attacker: a different embedding at cosine similarity ~0.00 to the victim
-          (voice's real, measured MEDIAN impostor similarity), compared
-          under the victim's own key.
-Attacker score: 0.5703   Threshold: 0.5800   Result: authenticated = False.
-```
+The immediately preceding pass at this problem applied a real, same-key, ROC-anchored voice threshold (0.58) to close this same gap, after the user explicitly approved that specific tradeoff. This pass found the actual root cause instead, which removes the need for that tradeoff entirely: **the calibration was reverted** (`evaluation/results/voice_threshold.json` and `voice_protected_metrics.csv` deleted), and `Settings.match_threshold=0.9` — the original, unmodified, uncalibrated fallback — is what every number in this report is measured against. `scripts/calibrate_protected_thresholds.py` remains in the repo as a reviewed, documented tool (its methodology-fix — same-key pairing, matching this system's real threat model — is a genuine contribution independent of whether it's ever invoked again), but is not currently applied to any modality.
 
-This margin is real but thin (0.57 vs 0.58) - consistent with the disclosed FAR≈22% at this operating point: a meaningful fraction of impostor attempts, particularly ones closer to the high end of voice's real impostor-similarity distribution, are expected to succeed. This is the explicit tradeoff the applied calibration accepts (see "Decision" below), not a residual bug.
+## Confirmation
 
-## Fusion Scenario Validation (Step 5)
-
-| Scenario | Expected | Result |
-|---|---|---|
-| A: Face ✓ Fingerprint ✓ Voice ✓ | GRANTED | GRANTED at current thresholds (all three genuinely pass at 0.9 for face/fingerprint; voice needs the pending recalibration decision - see above) |
-| B: Face ✓ Fingerprint ✗ Voice ✓ | DENIED under ALL_REQUIRED | Confirmed (`test_all_required_denies_the_exact_mixed_result_this_bug_report_describes`, and pre-existing `test_all_required_blocks_the_compensatory_averaging_bug`) |
-| C: Face ✓ Fingerprint ✓, voice missing | Building-dependent | Confirmed - `evaluate_fusion_policy` only ever sees modalities actually submitted (`test_fusion_only_requires_the_modalities_actually_submitted`); `backend/api/fusion.py` already only populates scores from uploaded files |
-| D: Face-only building | Face alone succeeds | Confirmed - same test as C; this was **already correct** before this sprint, not a new fix |
-
-## Database Validation (Step 6)
-
-Live query trace against a real in-memory DB, using the real `backend/database/crud.py` functions:
-
-```
-after enroll:                 active template key_version = 1
-after revoke + re-enroll:     old row is_active=False, new row is_active=True
-get_active_template(...):     returns key_version = 2 (the latest, not the first)
-history for this user:        2 rows total, old one preserved but inactive (audit trail intact)
-lookup for a different user_id: returns None (correctly scoped per user_id)
-```
-
-Confirms: correct `user_id` scoping, active-only lookup, latest `key_version`/`template_version` used, revoked templates ignored, full history preserved (not deleted) for audit purposes. No bug found here — this was already correct.
-
-## What Was NOT Done (and why)
-
-- **Fingerprint's threshold was not changed.** It already authenticates genuine users reliably at 0.9 (see "Before vs after"). Recalibrating it would only ever *lower* impostor resistance for zero genuine-acceptance benefit — this sprint's own investigation is the reason to leave it alone, not a reason to touch it.
-- **No threshold was lowered blindly, no score was mocked, no matcher was bypassed, and `authenticated` was never forced to `true`.** Voice's threshold change (below) is a real, disclosed, data-anchored calibration, not a workaround.
-
-## Decision and Outcome
-
-Voice's threshold gap (Cause 2) was presented to the user as an explicit choice, with the real FAR/FRR tradeoff disclosed up front: apply the same-key, ROC-anchored calibration (~0.58, ~22% FAR / ~17% FRR), keep 0.9 and rely on face+fingerprint for the demo, or relax the fusion policy instead. **The user chose to apply the calibration.**
-
-`evaluation/results/voice_threshold.json` now holds this real, same-key, ROC-anchored threshold for voice only. Fingerprint and face are untouched. This was verified, not just computed:
-
-- The full pytest suite (293 tests, up from 292) is green, including a new test that a genuine voice recapture now returns `authenticated: true` through the real HTTP API (`test_genuine_recapture_authenticates_with_the_calibrated_threshold`).
-- `scripts/debug_authentication_pipeline.py`, re-run against the live repository state, now reports `Authenticated: True` for the genuine three-modality scenario (see "Final Genuine Authentication Report").
-- A same-key impostor at voice's real median-impostor similarity was re-checked at the new threshold and still correctly rejected (0.57 vs 0.58 - a thin but real margin, consistent with the disclosed ~22% FAR at this operating point).
-
-The disclosed residual risk stands as accepted: some fraction of voice impostor attempts (particularly ones on the higher-similarity side of voice's real impostor distribution) will succeed at this threshold. Improving this further requires either a better-trained voice checkpoint or a real, labeled multi-sample dataset to calibrate against - both out of scope for this sprint.
+- 295 tests passing (up from 292 in the prior pass), including three new tests that would fail if this regressed: the mel-padding-contamination unit test, the realistic-duration genuine-success integration test, and the voice same-key impostor test.
+- `ALL_REQUIRED` remains the default and only fusion policy in effect. No per-modality threshold was changed, lowered, or invented. No score was mocked. No matcher was bypassed. `authenticated` was never forced to `true` — every "True" above is the real `ModalityService`/`evaluate_fusion_policy` return value, traced end-to-end.

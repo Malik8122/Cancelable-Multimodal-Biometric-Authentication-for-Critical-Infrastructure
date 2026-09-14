@@ -128,6 +128,13 @@ class VoicePreprocessor:
         self.vad_energy_threshold_ratio = vad_energy_threshold_ratio
         self.target_rms = target_rms
         self.target_num_samples = int(round(sample_rate * clip_seconds))
+        # scipy.signal.stft's frame count for an N-sample signal with
+        # boundary=None, padded=False, nperseg=n_fft, noverlap=n_fft-hop_length
+        # is 1 + (N - n_fft) // hop_length - precomputed once here so
+        # `preprocess()` can pad a short clip's *mel* representation to
+        # exactly the frame count a full-length clip would produce, without
+        # needing to run the STFT on a dummy array to find out.
+        self.target_num_frames = 1 + (self.target_num_samples - n_fft) // hop_length
         self._mel_filterbank = _build_mel_filterbank(sample_rate, n_fft, n_mels)
 
     def _resample(self, waveform: np.ndarray, original_sample_rate: int) -> np.ndarray:
@@ -249,10 +256,49 @@ class VoicePreprocessor:
         `training=True` selects a random crop for the fixed-length segment
         step (data variety during training); `training=False` (inference)
         uses a deterministic center crop, per the spec.
+
+        A clip whose *real* content (after VAD trimming) is shorter than
+        `clip_seconds` is handled differently from one that's longer -
+        see the reliability-sprint note below for why padding happens in the
+        mel domain, after normalization, rather than in the waveform domain
+        before it (the two are not equivalent: reliability-sprint debugging
+        measured a genuine same-speaker "recapture" whose real content
+        happened to trim a little short of 4 seconds collapsing to cosine
+        similarity 0.26, versus 0.996 for one that trimmed a little long -
+        both being small, realistic amounts of the same kind of natural
+        take-to-take timing variation).
         """
         waveform = self._to_mono(raw_audio)
         waveform = self._resample(waveform, sample_rate)
         waveform = self._trim_silence(waveform)
         waveform = self._normalize_loudness(waveform)
-        waveform = self._fixed_length_segment(waveform, training=training, rng=rng)
-        return self._log_mel_filterbank(waveform)
+
+        if len(waveform) >= self.target_num_samples:
+            segment = self._fixed_length_segment(waveform, training=training, rng=rng)
+            return self._log_mel_filterbank(segment)
+
+        # Shorter than the target: padding the *waveform* with raw silence
+        # here (the previous behavior) means the STFT produces a run of
+        # near-zero-energy frames whose log-magnitude is an extreme outlier
+        # (log(1e-10) =~ -23, versus real speech frames' typical range) -
+        # `_log_mel_filterbank`'s per-bin mean-normalization is computed
+        # across *all* frames, so a large enough fraction of these outlier
+        # frames drags the mean down and shifts the normalized values for
+        # the real speech frames too, contaminating the very features that
+        # are supposed to represent the speaker. Computing the mel
+        # filterbank (and its normalization) on the real, unpadded content
+        # only, then padding the resulting *frames* with a neutral
+        # already-mean-subtracted zero, avoids that contamination entirely.
+        if len(waveform) < self.n_fft:
+            # Too short for even one STFT frame - pad in the waveform domain
+            # just enough to produce one, rather than raising. This is a
+            # pathological, near-silent-input edge case (all real trimmed
+            # speech should comfortably exceed 25ms), not the common path
+            # this fix targets.
+            waveform = np.pad(waveform, (0, self.n_fft - len(waveform)))
+
+        mel = self._log_mel_filterbank(waveform)
+        pad_frames = self.target_num_frames - mel.shape[1]
+        if pad_frames > 0:
+            mel = np.pad(mel, ((0, 0), (0, pad_frames)))
+        return mel

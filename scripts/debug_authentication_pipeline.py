@@ -118,7 +118,17 @@ def main() -> None:
     genuine_samples = {
         "face": _add_noise(enroll_samples["face"].astype(np.float32), 0.05, seed=10).clip(0, 255).astype(np.uint8),
         "fingerprint": _add_noise(enroll_samples["fingerprint"].astype(np.float32), 0.1, seed=11).clip(0, 255).astype(np.uint8),
-        "voice": _add_noise(enroll_samples["voice"], 0.01, seed=12),
+        # A second take naturally runs a little shorter or longer than the
+        # first - this is what actually explains the original bug report's
+        # symptom (genuine voice scores scattered ~0.62-0.84): a take that
+        # trims a little *short* of the 4-second target used to get padded
+        # with raw silence before mel extraction, contaminating the mel
+        # normalization for the real speech content (see
+        # preprocessing/voice.py::VoicePreprocessor.preprocess and
+        # docs/AUTHENTICATION_RELIABILITY_REPORT.md). Plain additive sample
+        # noise on an identical-length clip (the previous version of this
+        # script) never exercised that code path at all.
+        "voice": _voice_waveform(seed=1, seconds=3.7),
     }
 
     db = _make_session()

@@ -251,6 +251,38 @@ def test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_curren
     assert result.authenticated is False
 
 
+def test_a_same_key_voice_impostor_with_realistic_similarity_is_rejected():
+    """Same real threat-model check as
+    `test_a_same_key_impostor_with_realistic_similarity_is_rejected_at_the_current_threshold`,
+    for voice: confirms the preprocessing fix in
+    preprocessing/voice.py::VoicePreprocessor.preprocess (which only changes
+    how a genuine embedding is *computed* from real audio) does not touch
+    template_protection's matching behavior at all. voice's real, measured
+    median impostor cosine similarity is ~0.00 (evaluation/results/voice_roc.csv) -
+    used directly here rather than a full synthetic-audio round trip, because
+    synthetic broadband "speaker" patterns carry no real speaker-identity
+    signal for this network to discriminate (confirmed separately: two
+    differently-seeded synthetic waveforms both incorrectly authenticated
+    against each other's real trained-model embeddings - an orthogonal,
+    already-known limitation of testing without real voice data, not a
+    security regression)."""
+    from template_protection.hkdf_keys import derive_key
+    from template_protection.biohash import generate_template
+    from template_protection.matcher import compare, accept
+    from template_protection.utils import l2_normalize
+
+    victim = l2_normalize(np.random.default_rng(1).standard_normal(192))
+    key = derive_key(
+        "unit-test-master-secret-not-for-production", application_id=APPLICATION_ID, user_id="VICTIM", modality="voice"
+    )
+    stored = generate_template(victim, key, output_bits=128)
+
+    attacker = _vector_with_cosine(victim, target_cosine=0.0, seed=2)
+    score = compare(generate_template(attacker, key, output_bits=128), stored, metric="hamming")
+
+    assert accept(score, threshold=0.9) is False
+
+
 def test_fusion_only_requires_the_modalities_actually_submitted():
     """Scenario D from the reliability sprint: a face-only building must not
     require fingerprint/voice just because ALL_REQUIRED is the default policy.

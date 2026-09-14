@@ -162,6 +162,41 @@ def test_normalize_loudness_on_silence_is_a_no_op():
     assert np.array_equal(preprocessor._normalize_loudness(silence), silence)
 
 
+def test_short_clip_mel_padding_does_not_contaminate_real_frames_mean():
+    """Regression test for the reliability-sprint bug: `preprocess()` used to
+    pad the *waveform* with raw silence before mel extraction whenever the
+    trimmed clip fell short of the target length, so `_log_mel_filterbank`'s
+    per-bin mean-normalization was computed across a mix of real speech
+    frames and artificial near-silent frames (log(1e-10) =~ -23, an extreme
+    outlier next to real speech energies) - dragging the mean down and
+    shifting the normalized values for the real frames too. The fix computes
+    the mel filterbank (and its normalization) on the real, unpadded content
+    only, then pads the resulting *frames* with an already-mean-subtracted
+    zero - a neutral value, not an outlier.
+
+    This is checked directly: mel-normalizing a short clip on its own (no
+    padding at all, by using a preprocessor whose target length matches the
+    clip exactly) must equal the real-frame portion of what `preprocess()`
+    produces when that same clip is *shorter* than a larger target - if
+    padding were still contaminating the mean, these would differ.
+    """
+    sample_rate = 16_000
+    short_clip = _tone(1.0, sample_rate=sample_rate, amplitude=0.5)  # no silence to trim
+
+    reference_preprocessor = VoicePreprocessor(sample_rate=sample_rate, clip_seconds=1.0)
+    reference_mel = reference_preprocessor.preprocess(short_clip, sample_rate=sample_rate)
+
+    padded_target_preprocessor = VoicePreprocessor(sample_rate=sample_rate, clip_seconds=4.0)
+    padded_mel = padded_target_preprocessor.preprocess(short_clip, sample_rate=sample_rate)
+
+    assert padded_mel.shape[1] == padded_target_preprocessor.target_num_frames
+    real_frames = padded_mel[:, : reference_mel.shape[1]]
+    np.testing.assert_allclose(real_frames, reference_mel, atol=1e-4)
+    # The padded tail must be exactly zero (mean-subtracted neutral value),
+    # never a real-looking value that could be mistaken for content.
+    assert np.array_equal(padded_mel[:, reference_mel.shape[1] :], np.zeros_like(padded_mel[:, reference_mel.shape[1] :]))
+
+
 def test_preprocess_returns_expected_mel_shape():
     preprocessor = VoicePreprocessor(sample_rate=16_000, clip_seconds=2.0, n_mels=N_MELS)
     raw_audio = _tone(2.0, sample_rate=16_000)

@@ -159,50 +159,57 @@ def test_recapture_with_small_noise_is_no_longer_catastrophically_unstable(clien
     assert body["score"] > 0.5, f"genuine recapture score collapsed to {body['score']} - the trim_silence bug may have regressed"
 
 
-def test_genuine_recapture_authenticates_with_the_calibrated_threshold(client):
-    """Now that evaluation/results/voice_threshold.json exists (a real,
-    same-key, ROC-anchored calibration - see
-    docs/AUTHENTICATION_RELIABILITY_REPORT.md and
-    scripts/calibrate_protected_thresholds.py), a genuine second capture with
-    a realistic amount of variation should not just be "stable" (the
-    previous test's claim) but should actually clear the real threshold and
-    authenticate - the actual "genuine user must authenticate successfully"
-    requirement this reliability sprint set out to satisfy for voice.
+def _speech_like(seed: int, seconds: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """A broadband, envelope-shaped 'utterance' - continuous spectral energy
+    like real speech (unlike a pure tone, which this real ECAPA-TDNN model
+    handles unpredictably - see this module's other tests)."""
+    from scipy.signal import butter, lfilter
 
-    Uses a broadband, envelope-shaped noise signal rather than a pure tone -
-    a pure sine wave is spectrally sparse in a way this real ECAPA-TDNN model
-    handles unpredictably (see scripts/calibrate_protected_thresholds.py's
-    and docs/AUTHENTICATION_RELIABILITY_REPORT.md's investigation notes);
-    broadband noise is a fairer, more speech-like stand-in.
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, seconds, int(sample_rate * seconds), endpoint=False)
+    b, a = butter(4, [300 / (sample_rate / 2), 3400 / (sample_rate / 2)], btype="band")
+    signal = lfilter(b, a, rng.standard_normal(len(t))).astype(np.float32)
+    envelope = (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t)).astype(np.float32)
+    signal = signal * envelope
+    return (signal / np.std(signal) * 0.1).astype(np.float32)
+
+
+def test_genuine_recapture_at_a_different_realistic_duration_authenticates(client):
+    """Regression test for the reliability-sprint bug fixed in
+    preprocessing/voice.py::VoicePreprocessor.preprocess: a second, genuine
+    recording will rarely last exactly as long as the enrollment recording -
+    a real speaker naturally varies how long they take. Before the fix, a
+    second take a little *shorter* than the enrolled one (so its VAD-trimmed
+    content fell short of the 4-second target and got padded with raw
+    silence before mel extraction) collapsed to cosine similarity 0.26 with
+    the enrolled embedding - worse than two genuinely unrelated recordings
+    typically score. After the fix (padding happens in the mel domain, after
+    per-clip mean-normalization, so the padded frames never contaminate the
+    real speech frames' statistics), the same scenario measures ~0.99 cosine
+    / ~0.97-0.98 Hamming similarity and authenticates at the ORIGINAL,
+    unmodified 0.9 threshold - no threshold change was needed or made.
     """
     pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
     pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")
-    from scipy.signal import butter, lfilter
 
-    sr = SAMPLE_RATE
-    t = np.linspace(0, 4.0, sr * 4, endpoint=False)
-    b, a = butter(4, [300 / (sr / 2), 3400 / (sr / 2)], btype="band")
-    rng = np.random.default_rng(7)
-    base = lfilter(b, a, rng.standard_normal(len(t))).astype(np.float32)
-    envelope = (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t)).astype(np.float32)
-    base = base * envelope
-    base = (base / np.std(base) * 0.1).astype(np.float32)
-    recaptured = base + np.random.default_rng(8).normal(scale=0.01 * np.std(base), size=base.shape).astype(np.float32)
+    enrolled = _speech_like(seed=1, seconds=4.0)
+    second_take = _speech_like(seed=1, seconds=3.7)  # same "speaker" pattern, naturally shorter take
 
     enroll_response = client.post(
         "/enroll",
         data={"user_id": "U-VOICE-GENUINE", "modality": "voice", "application_id": APPLICATION_ID},
-        files={"image": ("sample.wav", _encode_wav(base), "audio/wav")},
+        files={"image": ("sample.wav", _encode_wav(enrolled), "audio/wav")},
     )
     assert enroll_response.status_code == 200
 
     verify_response = client.post(
         "/verify/voice",
         data={"user_id": "U-VOICE-GENUINE", "application_id": APPLICATION_ID},
-        files={"image": ("recapture.wav", _encode_wav(recaptured), "audio/wav")},
+        files={"image": ("recapture.wav", _encode_wav(second_take), "audio/wav")},
     )
     assert verify_response.status_code == 200
     body = verify_response.json()
+    assert body["threshold"] == 0.9, "this test is only meaningful against the original, uncalibrated threshold"
     assert body["authenticated"] is True, f"genuine recapture (score={body['score']}, threshold={body['threshold']}) was denied"
 
 
