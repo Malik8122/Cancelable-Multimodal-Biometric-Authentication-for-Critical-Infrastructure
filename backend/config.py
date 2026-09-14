@@ -22,7 +22,6 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from embeddings.constants import DEFAULT_CHECKPOINTS
-from template_protection.biohash import DEFAULT_OUTPUT_BITS
 
 
 class Settings(BaseSettings):
@@ -71,10 +70,26 @@ class Settings(BaseSettings):
     fingerprint_model_path: Path = DEFAULT_CHECKPOINTS["fingerprint"]
     voice_model_path: Path = DEFAULT_CHECKPOINTS["voice"]
 
-    #: Default protected-template length in bits (see
-    #: template_protection/biohash.py::DEFAULT_OUTPUT_BITS for why 128 is
-    #: safe across every modality's embedding dimension).
-    template_bits: int = DEFAULT_OUTPUT_BITS
+    #: Default protected-template length in bits for *new* enrollments/
+    #: revocations only - `ModalityService.authenticate` always regenerates
+    #: the candidate template at the *stored* template's own `output_bits`
+    #: (backend/services/base_service.py), never this setting, so changing
+    #: this value can never cause an old template to be silently compared at
+    #: the wrong bit length; it only changes what future enrollments get.
+    #:
+    #: Was 128 (template_protection/biohash.py::DEFAULT_OUTPUT_BITS's
+    #: generic default). Raised to 256 after a real, quantified separability
+    #: experiment (see docs/AUTHENTICATION_RELIABILITY_REPORT.md's "128 vs
+    #: 256-bit BioHash migration" section): 128 bits measurably discarded
+    #: discriminative information for both face and voice (~7 percentage
+    #: points of EER each), and 256 bits recovered most of it in the same
+    #: experiment. 256 stays <= face's 512-dim embedding (a single
+    #: orthonormal projection block - see
+    #: template_protection/transform.py::build_orthonormal_projection) but
+    #: exceeds voice's 192-dim embedding (falls back to a second,
+    #: non-orthogonal-to-the-first block) - an explicit, documented
+    #: tradeoff, not a bug; re-measured per-modality rather than assumed.
+    template_bits: int = 256
 
     #: Upload validation (spec: "reject oversized uploads", "validate
     #: uploaded file types").
@@ -87,10 +102,14 @@ class Settings(BaseSettings):
 
     #: Acceptance threshold for `template_protection.matcher.accept`'s Hamming
     #: similarity score (1.0 = identical templates, 0.0 = fully opposite).
-    #: 0.9 is a conservative starting point for a 128-bit template; real
-    #: deployments should tune this from `evaluation/privacy_metrics.py`'s
-    #: EER output on their own enrolled population rather than trusting this
-    #: default blindly.
+    #: 0.9 is a conservative starting point, unvalidated against either the
+    #: 128-bit or 256-bit protected-template score space; real deployments
+    #: should tune this from `evaluation/privacy_metrics.py`'s EER output on
+    #: their own enrolled population rather than trusting this default
+    #: blindly. Left unchanged by the 128->256-bit `template_bits` migration
+    #: (see that field's docstring) - this value was not re-derived from the
+    #: 256-bit re-evaluation; see docs/AUTHENTICATION_RELIABILITY_REPORT.md
+    #: for why calibration was deliberately deferred.
     match_threshold: float = 0.9
 
     @property

@@ -3,6 +3,21 @@
 **Sprint:** Phase 2.7 — Authentication Reliability Sprint (root-cause pass)
 **Scope:** Backend only (`preprocessing/`, `template_protection/`, `fusion/`, `backend/`, `evaluation/`). No UI, API contract, or database schema changes. **No threshold was changed. `ALL_REQUIRED` remains the default fusion policy.**
 
+## 128 vs 256-bit BioHash migration
+
+Following the statistical-separability investigation below, `Settings.template_bits` (`backend/config.py`) was raised from 128 to **256** for all new enrollments/revocations. `ModalityService.authenticate` already regenerated the candidate template at the *stored* template's own `output_bits` (not this setting), so this change cannot cause an old 128-bit template to be silently compared at the wrong bit length — no architectural change was needed for that safety property, it already existed. `template_version` (`TEMPLATE_FORMAT_VERSION`) was deliberately **not** bumped: the transform algorithm itself is unchanged, only its bit-length parameter, and `output_bits` is already its own per-row column that fully distinguishes old (128) from new (256) templates.
+
+**Why:** a real, same-underlying-samples measurement (20 synthetic identities × 5 samples each, real face/voice checkpoints, same-key BioHash pairing) showed 128-bit BioHash measurably discards discriminative information versus the raw embedding for both modalities, and versus 256-bit:
+
+| | Raw AUC | 128-bit AUC | 128-bit EER | 256-bit AUC | 256-bit EER |
+|---|---|---|---|---|---|
+| Face | 0.935 | 0.861 | 20.7% | 0.909 | 19.1% |
+| Voice | 0.997 | 0.959 | 8.6% | 0.986 | 5.6% |
+
+256 bits improved both modalities using the *same* embeddings as the 128-bit measurement (only `output_bits` varied) — not a re-run with new, possibly-friendlier samples. Voice's embedding is 192-dim (< 256), so its 256-bit projection uses a second, non-orthogonal-to-the-first block (`template_protection/transform.py::build_orthonormal_projection`'s documented multi-block fallback) — an explicit tradeoff that did not, in this measurement, cost voice any separability; face's 512-dim embedding stays within one fully-orthonormal block at 256 bits.
+
+**Not done, deliberately:** `match_threshold` (0.9) was left unchanged — the new genuine/impostor distributions are reported so a threshold decision can be made deliberately later, not inferred silently from this migration. No model was retrained. VAD, denoising, and lighting normalization were left untouched, per explicit scope.
+
 ## Incident: real user report — Face 0.898 / Voice 0.719, both denied
 
 **Report:** UI showed `Face: 0.898 / 0.900 / No Match`, `Voice: 0.719 / 0.900 / No Match`, `Fusion: Denied`, for a user stating they were the same person enrolled. Template Version=v1, Key Version=v3.

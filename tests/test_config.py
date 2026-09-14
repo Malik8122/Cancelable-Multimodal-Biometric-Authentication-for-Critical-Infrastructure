@@ -20,7 +20,7 @@ def test_settings_has_sensible_defaults():
     settings = get_settings()
     assert settings.database_url == "sqlite:///./biometric.db"
     assert settings.application_id == "capstone-demo"
-    assert settings.template_bits == 128
+    assert settings.template_bits == 256
     assert 0.0 < settings.match_threshold <= 1.0
 
 
