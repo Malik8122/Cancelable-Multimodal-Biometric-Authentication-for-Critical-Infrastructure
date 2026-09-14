@@ -34,8 +34,9 @@ from backend.database.models import Base
 @lru_cache
 def get_engine() -> Engine:
     settings = get_settings()
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-    return create_engine(settings.database_url, connect_args=connect_args)
+    database_url = settings.resolved_database_url
+    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    return create_engine(database_url, connect_args=connect_args)
 
 
 @lru_cache

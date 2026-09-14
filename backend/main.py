@@ -26,8 +26,8 @@ logging.basicConfig(level=logging.INFO)
 
 
 def _resolve_cors_origins() -> list[str]:
-    """Read `CORS_ALLOWED_ORIGINS` (comma-separated) directly from the
-    environment rather than via `backend.config.get_settings()`.
+    """Read the allowed CORS origin(s) directly from the environment rather
+    than via `backend.config.get_settings()`.
 
     CORS middleware has to be registered at import time - Starlette builds
     its middleware stack on the app's first request and raises if
@@ -39,11 +39,29 @@ def _resolve_cors_origins() -> list[str]:
     has a chance to set it). Every other setting is still read the normal
     lazy way, via `Depends(get_settings)` inside request handlers - this is
     the one deliberate exception, for this one structural reason.
+
+    `CORS_ORIGIN` (singular, one origin) is the production/deployment-facing
+    name - "set this to your deployed Vercel URL" is simpler to document and
+    configure than a comma-separated list. `CORS_ALLOWED_ORIGINS` (plural,
+    comma-separated) remains supported for local/multi-origin development.
+    `CORS_ORIGIN` wins if both are set. Never `"*"` either way - this API
+    handles biometric templates.
     """
+    single_origin = os.environ.get("CORS_ORIGIN")
+    if single_origin and single_origin.strip():
+        return [single_origin.strip()]
     raw = os.environ.get("CORS_ALLOWED_ORIGINS")
     if not raw:
         return ["http://localhost:5173"]
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def _is_production() -> bool:
+    """Mirrors `backend.config.Settings.is_production` without needing
+    `get_settings()` at import time - see `_resolve_cors_origins` for why
+    that's unsafe here. `ENV=production` disables interactive Swagger/ReDoc
+    docs below; it never changes any authentication or model behavior."""
+    return os.environ.get("ENV", "development").strip().lower() == "production"
 
 
 @asynccontextmanager
@@ -61,6 +79,14 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
+    # Interactive Swagger/ReDoc/raw-OpenAPI-JSON are convenient in
+    # development but needlessly expose the full API surface publicly in
+    # production - disabled when ENV=production (see _is_production()).
+    # This changes nothing about how any endpoint behaves, only whether its
+    # documentation is servable.
+    docs_url=None if _is_production() else "/docs",
+    redoc_url=None if _is_production() else "/redoc",
+    openapi_url=None if _is_production() else "/openapi.json",
 )
 
 # Phase 3A dashboard runs on a different origin (Vite dev server) than this

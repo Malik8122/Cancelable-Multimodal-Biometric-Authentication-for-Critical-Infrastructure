@@ -11,11 +11,19 @@ uvicorn backend.main:app --reload
 ```
 
 Interactive docs (Swagger UI) are available at `http://127.0.0.1:8000/docs`
-once running, auto-generated from the same Pydantic models documented below.
+once running, auto-generated from the same Pydantic models documented below -
+disabled entirely (along with `/redoc` and `/openapi.json`) when `ENV=production`,
+see `backend/main.py::_is_production`.
 
-**CORS**: only origins listed in the `CORS_ALLOWED_ORIGINS` environment
-variable (comma-separated; defaults to `http://localhost:5173`, the Vite dev
-server) may call this API from a browser - see `backend/main.py::_resolve_cors_origins`.
+**CORS**: only one explicitly allowed origin may call this API from a
+browser - `CORS_ORIGIN` (a single origin, the production/deployment-facing
+name: set it to your deployed frontend's exact URL) or `CORS_ALLOWED_ORIGINS`
+(comma-separated, for local/multi-origin development; defaults to
+`http://localhost:5173`, the Vite dev server) - see
+`backend/main.py::_resolve_cors_origins`. Never `"*"`.
+
+See [`README.md`](../README.md#deployment-render--vercel) for the full
+Render (backend) + Vercel (frontend) deployment guide.
 
 ## Scope note: "auth" here means biometric verification
 

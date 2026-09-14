@@ -28,7 +28,9 @@ export function BackendStatusBanner() {
     >
       <ShieldAlert className="h-3 w-3 text-warning" strokeWidth={1.5} />
       <span className="text-xs text-warning">
-        Backend unreachable - start it with `uvicorn backend.main:app --reload`
+        {import.meta.env.DEV
+          ? 'Backend unreachable - start it with `uvicorn backend.main:app --reload`'
+          : 'Backend temporarily unreachable - please try again shortly'}
       </span>
     </motion.div>
   )

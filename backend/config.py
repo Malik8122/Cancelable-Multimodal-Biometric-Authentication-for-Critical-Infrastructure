@@ -18,6 +18,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from embeddings.constants import DEFAULT_CHECKPOINTS
@@ -37,6 +38,23 @@ class Settings(BaseSettings):
     #: needs no code change beyond this URL and the SQLite-specific
     #: `connect_args` in backend/database/session.py.
     database_url: str = "sqlite:///./biometric.db"
+
+    #: Bare filesystem path to the SQLite database file (e.g. Render's
+    #: persistent disk mount, `/var/data/biometric.db`) - a deployment
+    #: platform's environment-variable UI generally makes a plain path much
+    #: easier to set correctly than a full SQLAlchemy URL. When set, this
+    #: takes priority over `database_url` (see `resolved_database_url`);
+    #: `database_url` stays the default/dev-oriented setting and is
+    #: unaffected when this is left unset.
+    database_path: str | None = None
+
+    #: "development" (default) or "production" - read from `ENV`, not
+    #: `ENVIRONMENT` (pydantic-settings' default case-insensitive field-name
+    #: match), since that's the variable name Render deployments set.
+    #: `backend/main.py` uses this only to disable interactive Swagger/ReDoc
+    #: docs in production - never to change any authentication or model
+    #: behavior.
+    environment: str = Field(default="development", validation_alias="ENV")
 
     #: Default application ID used when a request doesn't specify one -
     #: primarily for local/demo use; real multi-tenant use should always pass
@@ -74,6 +92,22 @@ class Settings(BaseSettings):
     #: EER output on their own enrolled population rather than trusting this
     #: default blindly.
     match_threshold: float = 0.9
+
+    @property
+    def resolved_database_url(self) -> str:
+        """The SQLAlchemy URL `backend/database/session.py::get_engine` should actually use.
+
+        `database_path` (a bare file path) takes priority over `database_url`
+        (a full SQLAlchemy URL) when both are set - see `database_path`'s
+        docstring for why a deployment platform is given the simpler option.
+        """
+        if self.database_path:
+            return f"sqlite:///{self.database_path}"
+        return self.database_url
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() == "production"
 
 
 @lru_cache

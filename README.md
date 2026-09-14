@@ -201,6 +201,83 @@ back to a deterministic mock embedding (see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#mock-mode)) so the rest of the
 system can still be developed and tested.
 
+## Deployment (Render + Vercel)
+
+Backend on [Render](https://render.com) (with a persistent disk for the
+SQLite file), frontend on [Vercel](https://vercel.com). Nothing about
+authentication logic, model behavior, API routes, or payloads changes
+between local dev and this deployment - it's configuration only.
+
+### Backend -> Render
+
+1. Push this repo to GitHub (Render deploys from a Git connection).
+2. In the Render dashboard: **New -> Blueprint**, point it at
+   [`backend/render.yaml`](backend/render.yaml), and confirm the service's
+   root directory resolves to the **repository root** (not `backend/`) -
+   `backend/render.yaml`'s own comments explain why (the backend imports
+   sibling packages like `models/` and `template_protection/` that only
+   resolve from the repo root).
+3. Render provisions a 1GB persistent disk mounted at `/var/data` (see the
+   `disk:` block in `backend/render.yaml`) so the SQLite database survives
+   deploys/restarts, unlike the container's own ephemeral filesystem.
+4. Set these environment variables in the Render dashboard (also documented
+   in [`backend/.env.example`](backend/.env.example)):
+
+   | Variable | Value |
+   |---|---|
+   | `MASTER_SECRET` | A real secret - `python -c "import secrets; print(secrets.token_hex(32))"`. Never reuse a value from any `.env.example`. |
+   | `DATABASE_PATH` | `/var/data/biometric.db` (matches the disk mount above) |
+   | `ENV` | `production` (disables `/docs`, `/redoc`, `/openapi.json`) |
+   | `CORS_ORIGIN` | Your deployed Vercel URL, e.g. `https://your-app.vercel.app` (no trailing slash) - set this *after* step 5 below, once you know the real URL |
+
+5. **Trained checkpoints**: this repo tracks `.pt`/`.h5` files under
+   `models/*/saved/` via Git LFS (see [Prerequisites](#prerequisites)).
+   Render's build clones your repo including LFS objects automatically for a
+   GitHub-connected service; if a checkpoint ever comes back missing (check
+   `GET /system/health`'s modality-level fields), `BaseEmbedder` silently
+   falls back to a non-biometric mock embedding for that modality - the
+   service still runs, but authentication for that modality stops being
+   meaningful. Verify LFS objects are present rather than pointer files if
+   this happens.
+6. Confirm it's up: `curl https://<your-render-service>.onrender.com/health`
+   should return `{"status": "ok"}`. `/docs` should now 404 (Swagger is
+   disabled in production).
+
+### Frontend -> Vercel
+
+1. Import this repo into Vercel; set its **Root Directory** to `frontend/`
+   (Vercel auto-detects the Vite framework preset from there).
+2. In Vercel Project Settings -> Environment Variables, add
+   `VITE_API_BASE_URL` = your Render backend's URL from the previous
+   section (e.g. `https://biometric-auth-backend.onrender.com`), scoped to
+   the **Production** environment. [`frontend/.env.production.example`](frontend/.env.production.example)
+   documents the same variable for a local production build
+   (`npm run build`).
+3. Deploy. Vercel serves everything over HTTPS by default, which is a hard
+   requirement for `getUserMedia` (camera/microphone capture) to work in any
+   real browser outside `localhost` - no extra configuration needed for
+   that specifically, just don't introduce a non-HTTPS asset/API URL
+   anywhere.
+4. Go back to Render and set `CORS_ORIGIN` to this exact Vercel URL, then
+   redeploy the backend (env var changes require a restart) - until this is
+   set correctly, the browser will block every request with a CORS error,
+   and [`BackendStatusBanner`](frontend/src/components/layout/BackendStatusBanner.tsx)
+   will show a friendly "backend temporarily unreachable" message rather
+   than fail silently or fabricate a connected state.
+
+### Local production build (optional sanity check before deploying)
+
+```bash
+# Backend
+cp backend/.env.example .env   # from the repo root; fill in a real MASTER_SECRET
+ENV=production uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+# Frontend, in another terminal
+cd frontend
+cp .env.production.example .env.production   # fill in the backend URL above
+npm run build && npm run preview
+```
+
 ## Model decisions
 
 | Modality | Model | Why |
