@@ -190,6 +190,54 @@ def test_all_required_denies_the_exact_mixed_result_this_bug_report_describes():
     assert decision.fused_score > 0.9
 
 
+def test_all_required_denies_a_real_user_reported_incident_with_a_one_bit_margin():
+    """Regression test for a real, live-diagnosed incident (see
+    docs/AUTHENTICATION_RELIABILITY_REPORT.md's "Incident" section): a
+    genuinely enrolled user's UI showed Face=0.898/threshold=0.900/No Match
+    and Voice=0.719/threshold=0.900/No Match, Fusion=Denied, for a person
+    they stated was the same one enrolled.
+
+    Full re-investigation (preprocessing determinism, key derivation,
+    template retrieval against the actual real database row - user
+    DEMO-YWKQMU7B, template_version=1/key_version=3, matching the UI exactly -
+    fusion decision logic) found every mechanical component correct. The
+    diagnostic signature that rules out a code bug: 0.898 is a *rounded
+    display* of a Hamming score that, on a 128-bit template, can only be an
+    exact multiple of 1/128 - the true value was 115/128 (0.8984375),
+    exactly ONE bit-flip short of the 116/128 (0.90625) needed to clear 0.9.
+    A real preprocessing/template/model bug in this codebase has a very
+    different signature: the two bugs actually found and fixed in earlier
+    sprints (preprocessing/voice.py's frame-overlap and mel-padding issues)
+    each collapsed genuine similarity to near-chance or *negative* cosine
+    similarity - nothing like a single-bit miss. Voice's 92/128 (0.71875,
+    36 bits differing) is a larger gap, consistent with voice's
+    already-documented, already-disclosed uncalibrated-threshold gap (see
+    scripts/calibrate_protected_thresholds.py's investigation), not a new
+    regression.
+
+    This test pins the correct, current, intentional behavior given the
+    real reported scores and the unmodified 0.9 threshold - it must keep
+    passing (denied) unless a real, disclosed threshold-calibration change
+    is deliberately made, and must never be "fixed" by editing the scores
+    here to force it to pass.
+    """
+    scores = {"face": 115 / 128, "voice": 92 / 128}
+    individually_authenticated = {"face": False, "voice": False}
+
+    decision = evaluate_fusion_policy(scores, individually_authenticated, FusionPolicy.ALL_REQUIRED, fusion_threshold=0.9)
+
+    assert decision.authenticated is False
+    assert decision.failed_modalities == ["face", "voice"]
+    assert decision.matched_modalities == []
+    # Precisely pins the one-bit-margin finding: 115/128 correctly fails,
+    # but a single additional matching bit (116/128) would have passed -
+    # face was this close to passing on its own, not a wide miss.
+    from template_protection.matcher import accept
+
+    assert accept(115 / 128, threshold=0.9) is False
+    assert accept(116 / 128, threshold=0.9) is True
+
+
 def _unit_vector(dim: int, seed: int) -> np.ndarray:
     from template_protection.utils import l2_normalize
 
