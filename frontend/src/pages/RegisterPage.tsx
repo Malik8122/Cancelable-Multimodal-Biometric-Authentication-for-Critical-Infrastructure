@@ -7,25 +7,34 @@ import { ApiError, type Modality } from '../api/types'
 import { FaceCapture } from '../components/capture/FaceCapture'
 import { FingerprintCapture } from '../components/capture/FingerprintCapture'
 import { VoiceCapture } from '../components/capture/VoiceCapture'
+import { ModalityChip } from '../components/biometric/ModalityChip'
 import { Stepper } from '../components/biometric/Stepper'
 import { getBuilding } from '../config/buildings'
 import { useSession } from '../context/SessionContext'
 
 const APPLICATION_ID = 'ncisn-security-network'
-const MODALITIES: Modality[] = ['face', 'fingerprint', 'voice']
-const STEP_LABELS = ['Face', 'Fingerprint', 'Voice', 'Secure Template']
+const ALL_MODALITIES: Array<'face' | 'fingerprint' | 'voice'> = ['face', 'fingerprint', 'voice']
 
-type Step = 'capture' | 'privacy' | 'submitting' | 'success' | 'error'
+type Step = 'select' | 'capture' | 'privacy' | 'submitting' | 'success' | 'error'
 
 interface Captured {
   blob: Blob
   filename: string
 }
 
-const PIPELINE_STAGES = [
-  { key: 'face-embed', label: 'Face embedding', icon: ScanFace },
-  { key: 'finger-embed', label: 'Fingerprint embedding', icon: Fingerprint },
-  { key: 'voice-embed', label: 'Voice embedding', icon: Mic },
+interface PipelineStage {
+  key: string
+  label: string
+  icon: typeof ScanFace
+}
+
+const EMBED_STAGE: Record<'face' | 'fingerprint' | 'voice', PipelineStage> = {
+  face: { key: 'face-embed', label: 'Face embedding', icon: ScanFace },
+  fingerprint: { key: 'finger-embed', label: 'Fingerprint embedding', icon: Fingerprint },
+  voice: { key: 'voice-embed', label: 'Voice embedding', icon: Mic },
+}
+
+const SHARED_STAGES: PipelineStage[] = [
   { key: 'hkdf', label: 'HKDF key generation', icon: KeyRound },
   { key: 'biohash', label: 'Cancelable BioHash', icon: Lock },
   { key: 'template', label: 'Protected template assembled', icon: ShieldCheck },
@@ -38,21 +47,33 @@ const MODALITY_ICON: Record<'face' | 'fingerprint' | 'voice', typeof ScanFace> =
   voice: Mic,
 }
 
+const MODALITY_LABEL: Record<'face' | 'fingerprint' | 'voice', string> = {
+  face: 'Face',
+  fingerprint: 'Fingerprint',
+  voice: 'Voice',
+}
+
 export function RegisterPage() {
   const { buildingId } = useParams<{ buildingId: string }>()
   const navigate = useNavigate()
   const { userId } = useSession()
   const building = buildingId ? getBuilding(buildingId) : undefined
-  const modalities = MODALITIES
 
+  const [selected, setSelected] = useState<Array<'face' | 'fingerprint' | 'voice'>>(
+    () => (building?.requiredModalities.filter((m): m is 'face' | 'fingerprint' | 'voice' => m !== 'iris') ?? ['face']),
+  )
   const [captured, setCaptured] = useState<Partial<Record<Modality, Captured>>>({})
   const [activeIndex, setActiveIndex] = useState(0)
-  const [step, setStep] = useState<Step>('capture')
+  const [step, setStep] = useState<Step>('select')
   const [pipelineStage, setPipelineStage] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [enrolledResults, setEnrolledResults] = useState<
     { modality: Modality; templateVersion: number; keyVersion: number; templateId: string }[]
   >([])
+
+  const modalities = selected
+  const pipelineStages = useMemo(() => [...selected.map((m) => EMBED_STAGE[m]), ...SHARED_STAGES], [selected])
+  const stepLabels = useMemo(() => [...selected.map((m) => MODALITY_LABEL[m]), 'Secure Template'], [selected])
 
   if (!building) {
     return (
@@ -65,7 +86,16 @@ export function RegisterPage() {
     )
   }
 
-  const activeModality = modalities[activeIndex] as 'face' | 'fingerprint' | 'voice' | undefined
+  const toggleModality = (modality: 'face' | 'fingerprint' | 'voice') => {
+    setSelected((prev) => (prev.includes(modality) ? prev.filter((m) => m !== modality) : [...prev, modality]))
+  }
+
+  const beginCapture = () => {
+    setActiveIndex(0)
+    setStep('capture')
+  }
+
+  const activeModality = modalities[activeIndex]
 
   const handleCapture = (modality: Modality) => (blob: Blob, filename: string) => {
     setCaptured((prev) => ({ ...prev, [modality]: { blob, filename } }))
@@ -82,7 +112,7 @@ export function RegisterPage() {
       const interval = window.setInterval(() => {
         stage += 1
         setPipelineStage(stage)
-        if (stage >= PIPELINE_STAGES.length) {
+        if (stage >= pipelineStages.length) {
           window.clearInterval(interval)
           resolve()
         }
@@ -114,18 +144,50 @@ export function RegisterPage() {
     }
   }
 
-  const currentProgressIndex = step === 'capture' ? activeIndex : 3
+  const currentProgressIndex = step === 'capture' ? activeIndex : stepLabels.length - 1
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-14">
       <p className="mb-2 text-center text-xs font-medium tracking-wide text-muted-foreground">{building.name}</p>
       <h1 className="mb-10 text-center text-2xl font-semibold tracking-tight text-foreground">Register Biometrics</h1>
 
-      <div className="mb-12">
-        <Stepper steps={STEP_LABELS} currentIndex={currentProgressIndex} />
-      </div>
+      {step !== 'select' && (
+        <div className="mb-12">
+          <Stepper steps={stepLabels} currentIndex={currentProgressIndex} />
+        </div>
+      )}
 
       <AnimatePresence mode="wait">
+        {step === 'select' && (
+          <motion.div key="select" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-xl">
+            <p className="mb-1.5 text-center text-sm text-muted-foreground">Choose which biometrics to register</p>
+            <p className="mb-6 text-center text-xs text-muted-foreground/70">
+              Register fingerprint only, face and fingerprint, or all three - any combination is supported for every
+              facility.
+            </p>
+            <div className="mb-4 grid grid-cols-3 gap-3">
+              {ALL_MODALITIES.map((modality) => (
+                <ModalityChip
+                  key={modality}
+                  modality={modality}
+                  selected={selected.includes(modality)}
+                  onToggle={() => toggleModality(modality)}
+                />
+              ))}
+            </div>
+            <p className="mb-8 text-center text-xs text-muted-foreground/70">
+              Recommended for {building.name}: {building.requiredModalities.map((m) => MODALITY_LABEL[m as 'face' | 'fingerprint' | 'voice'] ?? m).join(', ')}
+            </p>
+            <button
+              disabled={selected.length === 0}
+              onClick={beginCapture}
+              className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              Continue ({selected.length} factor{selected.length === 1 ? '' : 's'})
+            </button>
+          </motion.div>
+        )}
+
         {step === 'capture' && activeModality && (
           <motion.div key="capture" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-md">
             {activeModality === 'face' && <FaceCapture mode="register" onCapture={handleCapture('face')} />}
@@ -136,7 +198,7 @@ export function RegisterPage() {
 
         {step === 'privacy' && (
           <motion.div key="privacy" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center">
-            <PrivacyPreview />
+            <PrivacyPreview modalities={selected} stages={pipelineStages} />
             <button
               onClick={handleProceed}
               className="mt-8 rounded-xl bg-primary px-10 py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-black/20 transition-opacity hover:opacity-90"
@@ -148,7 +210,7 @@ export function RegisterPage() {
 
         {step === 'submitting' && (
           <motion.div key="submitting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <PipelineAnimation activeStage={pipelineStage} />
+            <PipelineAnimation activeStage={pipelineStage} stages={pipelineStages} />
           </motion.div>
         )}
 
@@ -218,14 +280,14 @@ export function RegisterPage() {
   )
 }
 
-function PrivacyPreview() {
+function PrivacyPreview({ modalities, stages }: { modalities: Array<'face' | 'fingerprint' | 'voice'>; stages: PipelineStage[] }) {
   return (
     <div className="mx-auto max-w-lg rounded-2xl border border-border bg-card/60 p-8 backdrop-blur-xl">
       <p className="mb-6 text-xs font-medium tracking-wide text-muted-foreground">Privacy Protection Pipeline</p>
       <div className="flex flex-col items-center gap-4">
         <div className="flex gap-3">
-          {MODALITIES.map((m) => {
-            const Icon = MODALITY_ICON[m as 'face' | 'fingerprint' | 'voice']
+          {modalities.map((m) => {
+            const Icon = MODALITY_ICON[m]
             return (
               <div key={m} className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
                 <Icon className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
@@ -235,7 +297,7 @@ function PrivacyPreview() {
         </div>
         <ParticleStream />
         <div className="space-y-2">
-          {PIPELINE_STAGES.map((stage) => (
+          {stages.map((stage) => (
             <div key={stage.key} className="flex items-center gap-2.5 text-sm text-muted-foreground">
               <stage.icon className="h-4 w-4 text-primary" strokeWidth={1.5} />
               {stage.label}
@@ -271,10 +333,10 @@ function ParticleStream() {
   )
 }
 
-function PipelineAnimation({ activeStage }: { activeStage: number }) {
+function PipelineAnimation({ activeStage, stages }: { activeStage: number; stages: PipelineStage[] }) {
   return (
     <div className="mx-auto max-w-md space-y-3">
-      {PIPELINE_STAGES.map((stage, i) => {
+      {stages.map((stage, i) => {
         const done = i < activeStage
         const active = i === activeStage
         return (
