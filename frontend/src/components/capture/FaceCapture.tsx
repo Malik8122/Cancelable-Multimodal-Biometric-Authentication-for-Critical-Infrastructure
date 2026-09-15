@@ -13,6 +13,7 @@ const ACCEPTED = ['image/jpeg', 'image/jpg', 'image/png']
 
 export function FaceCapture({ mode, onCapture, disabled }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const [streamActive, setStreamActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [flash, setFlash] = useState(false)
@@ -20,18 +21,28 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
   const reducedMotion = useReducedMotion()
 
   useEffect(() => {
-    let stream: MediaStream | null = null
     navigator.mediaDevices
       ?.getUserMedia({ video: { facingMode: 'user' } })
       .then((s) => {
-        stream = s
-        if (videoRef.current) videoRef.current.srcObject = s
+        streamRef.current = s
         setStreamActive(true)
       })
       .catch((err) => setCameraError(err instanceof Error ? err.message : 'Camera access was denied.'))
 
-    return () => stream?.getTracks().forEach((track) => track.stop())
+    return () => streamRef.current?.getTracks().forEach((track) => track.stop())
   }, [])
+
+  // The <video> element below is only rendered once streamActive is true,
+  // so videoRef.current is always null inside the getUserMedia().then()
+  // above (that effect runs before this component has ever rendered the
+  // streaming branch). This effect runs after React commits the render
+  // that follows setStreamActive(true), by which point the <video> element
+  // genuinely exists - only then is it safe to assign srcObject.
+  useEffect(() => {
+    if (streamActive && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+    }
+  }, [streamActive])
 
   const capture = () => {
     const video = videoRef.current
