@@ -41,7 +41,6 @@ python-dotenv>=1.0
 # these (numpy/scipy only) - see docs/VOICE_MODEL.md's dependency note. ---
 torchaudio>=2.2
 speechbrain>=1.0
-webrtcvad>=2.0.10
 
 # --- Fingerprint accuracy upgrade (SOCOFing + ArcFace) - training-time
 # augmentation only; preprocessing/fingerprint.py itself needs no extra deps. ---
