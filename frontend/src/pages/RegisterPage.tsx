@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { AlertCircle, Check, Database, Fingerprint, KeyRound, Lock, Mic, ScanFace, ShieldCheck } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, Database, Fingerprint, KeyRound, Lock, Mic, ScanFace, ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { enroll } from '../api/client'
@@ -87,12 +87,29 @@ export function RegisterPage() {
   }
 
   const toggleModality = (modality: 'face' | 'fingerprint' | 'voice') => {
-    setSelected((prev) => (prev.includes(modality) ? prev.filter((m) => m !== modality) : [...prev, modality]))
+    const isDeselecting = selected.includes(modality)
+    setSelected((prev) => (isDeselecting ? prev.filter((m) => m !== modality) : [...prev, modality]))
+    // Deselecting a modality that was already captured must not leave its
+    // biometric data behind - it would otherwise still get enrolled in
+    // handleProceed (which only checks `captured[modality]`, not `selected`).
+    if (isDeselecting) {
+      setCaptured((prev) => {
+        if (!(modality in prev)) return prev
+        const next = { ...prev }
+        delete next[modality]
+        return next
+      })
+    }
   }
 
   const beginCapture = () => {
     setActiveIndex(0)
     setStep('capture')
+  }
+
+  const backToSelection = () => {
+    setActiveIndex(0)
+    setStep('select')
   }
 
   const activeModality = modalities[activeIndex]
@@ -190,6 +207,13 @@ export function RegisterPage() {
 
         {step === 'capture' && activeModality && (
           <motion.div key="capture" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-md">
+            <button
+              onClick={backToSelection}
+              className="mb-4 flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
+              Change Selection
+            </button>
             {activeModality === 'face' && <FaceCapture mode="register" onCapture={handleCapture('face')} />}
             {activeModality === 'fingerprint' && <FingerprintCapture mode="register" onCapture={handleCapture('fingerprint')} />}
             {activeModality === 'voice' && <VoiceCapture mode="register" onCapture={handleCapture('voice')} />}

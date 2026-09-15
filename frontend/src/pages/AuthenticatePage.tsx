@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { AlertCircle, Check, Fingerprint, Layers, Lock, Mic, ScanFace, ShieldQuestion, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, Fingerprint, Layers, Lock, Mic, ScanFace, ShieldQuestion, Sparkles } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { authenticateFusion } from '../api/client'
@@ -72,7 +72,20 @@ export function AuthenticatePage() {
   }
 
   const toggle = (modality: Modality) => {
-    setSelected((prev) => (prev.includes(modality) ? prev.filter((m) => m !== modality) : [...prev, modality]))
+    const isDeselecting = selected.includes(modality)
+    setSelected((prev) => (isDeselecting ? prev.filter((m) => m !== modality) : [...prev, modality]))
+    // Deselecting a modality that was already captured must not leave its
+    // sample behind - handleSubmit only reads `captured[modality]` for
+    // whichever modalities end up in `selected`, but stale captured data
+    // for a since-deselected modality has no reason to be kept around.
+    if (isDeselecting) {
+      setCaptured((prev) => {
+        if (!(modality in prev)) return prev
+        const next = { ...prev }
+        delete next[modality]
+        return next
+      })
+    }
   }
 
   const allCaptured = selected.every((m) => captured[m])
@@ -80,6 +93,8 @@ export function AuthenticatePage() {
   const handleCapture = (modality: Modality) => (blob: Blob, filename: string) => {
     setCaptured((prev) => ({ ...prev, [modality]: { blob, filename } }))
   }
+
+  const backToSelection = () => setPhase('select')
 
   const startTimer = () => {
     startedAtRef.current = performance.now()
@@ -169,6 +184,13 @@ export function AuthenticatePage() {
 
         {phase === 'capture' && (
           <motion.div key="capture" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <button
+              onClick={backToSelection}
+              className="mb-4 flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
+              Change Selection
+            </button>
             <div className="mb-3 grid grid-cols-1 gap-4 md:grid-cols-3">
               {selected.includes('face') && <FaceCapture mode="verify" onCapture={handleCapture('face')} />}
               {selected.includes('fingerprint') && <FingerprintCapture mode="verify" onCapture={handleCapture('fingerprint')} />}

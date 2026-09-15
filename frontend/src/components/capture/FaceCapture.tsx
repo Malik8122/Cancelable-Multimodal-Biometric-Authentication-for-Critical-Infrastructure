@@ -20,29 +20,41 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const reducedMotion = useReducedMotion()
 
+  // <video> below is now ALWAYS mounted (never conditionally rendered), so
+  // videoRef.current already exists by the time this effect's promise
+  // resolves - srcObject can be assigned directly here, with no second
+  // effect needed to wait for a later render. A previous fix moved the
+  // assignment into a second useEffect keyed on streamActive instead of
+  // fixing the actual issue (the element not existing yet) - that only
+  // worked if the video element mounting actually happened synchronously
+  // with that state flip, which conditional rendering doesn't guarantee
+  // robustly across browsers. Explicit .play() is called defensively after
+  // assigning srcObject: `autoplay` should suffice per spec once srcObject
+  // is set on an already-mounted element, but a handful of Chromium/WebView
+  // builds don't reliably resume it for a src assigned after initial mount.
   useEffect(() => {
+    let cancelled = false
     navigator.mediaDevices
       ?.getUserMedia({ video: { facingMode: 'user' } })
       .then((s) => {
+        if (cancelled) {
+          s.getTracks().forEach((track) => track.stop())
+          return
+        }
         streamRef.current = s
+        if (videoRef.current) {
+          videoRef.current.srcObject = s
+          void videoRef.current.play().catch(() => {})
+        }
         setStreamActive(true)
       })
       .catch((err) => setCameraError(err instanceof Error ? err.message : 'Camera access was denied.'))
 
-    return () => streamRef.current?.getTracks().forEach((track) => track.stop())
-  }, [])
-
-  // The <video> element below is only rendered once streamActive is true,
-  // so videoRef.current is always null inside the getUserMedia().then()
-  // above (that effect runs before this component has ever rendered the
-  // streaming branch). This effect runs after React commits the render
-  // that follows setStreamActive(true), by which point the <video> element
-  // genuinely exists - only then is it safe to assign srcObject.
-  useEffect(() => {
-    if (streamActive && videoRef.current) {
-      videoRef.current.srcObject = streamRef.current
+    return () => {
+      cancelled = true
+      streamRef.current?.getTracks().forEach((track) => track.stop())
     }
-  }, [streamActive])
+  }, [])
 
   const capture = () => {
     const video = videoRef.current
@@ -77,47 +89,52 @@ export function FaceCapture({ mode, onCapture, disabled }: Props) {
       </div>
 
       <div className="mb-4 aspect-video overflow-hidden rounded-xl border border-border bg-black/40">
-        {previewUrl ? (
-          <img src={previewUrl} alt="Captured face" className="h-full w-full object-cover" />
-        ) : streamActive ? (
-          <div className="relative h-full w-full">
-            <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-            {/* Minimal scanner corners */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="relative h-[70%] w-[60%]">
-                {(['-top-1 -left-1', '-top-1 -right-1', '-bottom-1 -left-1', '-bottom-1 -right-1'] as const).map(
-                  (pos) => (
-                    <div
-                      key={pos}
-                      className={`absolute ${pos} h-5 w-5 border-white/60 ${pos.includes('top') ? 'border-t' : 'border-b'} ${pos.includes('left') ? 'border-l' : 'border-r'}`}
+        <div className="relative h-full w-full">
+          <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+
+          {streamActive && !previewUrl && (
+            <>
+              {/* Minimal scanner corners */}
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="relative h-[70%] w-[60%]">
+                  {(['-top-1 -left-1', '-top-1 -right-1', '-bottom-1 -left-1', '-bottom-1 -right-1'] as const).map(
+                    (pos) => (
+                      <div
+                        key={pos}
+                        className={`absolute ${pos} h-5 w-5 border-white/60 ${pos.includes('top') ? 'border-t' : 'border-b'} ${pos.includes('left') ? 'border-l' : 'border-r'}`}
+                      />
+                    ),
+                  )}
+                  {!reducedMotion && (
+                    <motion.div
+                      className="absolute inset-x-0 h-px bg-white/40"
+                      animate={{ y: ['0%', '100%', '0%'] }}
+                      transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
                     />
-                  ),
-                )}
-                {!reducedMotion && (
+                  )}
+                </div>
+              </div>
+              <AnimatePresence>
+                {flash && (
                   <motion.div
-                    className="absolute inset-x-0 h-px bg-white/40"
-                    animate={{ y: ['0%', '100%', '0%'] }}
-                    transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
+                    initial={{ opacity: 0.9 }}
+                    animate={{ opacity: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="pointer-events-none absolute inset-0 bg-white"
                   />
                 )}
-              </div>
+              </AnimatePresence>
+            </>
+          )}
+
+          {previewUrl && <img src={previewUrl} alt="Captured face" className="absolute inset-0 h-full w-full object-cover" />}
+
+          {!streamActive && !previewUrl && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 px-6 text-center text-xs text-muted-foreground">
+              {cameraError ?? 'Preparing camera...'}
             </div>
-            <AnimatePresence>
-              {flash && (
-                <motion.div
-                  initial={{ opacity: 0.9 }}
-                  animate={{ opacity: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="pointer-events-none absolute inset-0 bg-white"
-                />
-              )}
-            </AnimatePresence>
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-            {cameraError ?? 'Preparing camera...'}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <p className="mb-5 text-[13px] leading-relaxed text-muted-foreground">
