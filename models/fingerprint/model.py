@@ -28,16 +28,28 @@ from models.fingerprint.config import FingerprintConfig
 class FingerprintEmbeddingNet:
     """Thin wrapper so this module has no hard torch/torchvision import at module load time."""
 
-    def __new__(cls, config: FingerprintConfig | None = None):
+    def __new__(cls, config: FingerprintConfig | None = None, pretrained: bool = True):
+        """`pretrained=True` (the default) initializes the ResNet50 backbone
+        from ImageNet weights - what `models/fingerprint/train.py` needs to
+        fine-tune from, and what every existing test already exercises via
+        the default. `models/fingerprint/inference.py::FingerprintEmbedder`
+        passes `pretrained=False` instead: it only ever constructs this net
+        immediately before overwriting every weight with a real, already
+        fine-tuned checkpoint's state_dict, so materializing ImageNet
+        weights first is pure waste there - a real memory/network cost with
+        zero effect on the model actually served (see that module's
+        `_build_model` for the full rationale).
+        """
         import torch.nn as nn
         import torchvision.models as tv_models
 
         config = config or FingerprintConfig()
+        weights = tv_models.ResNet50_Weights.IMAGENET1K_V2 if pretrained else None
 
         class _Net(nn.Module):
             def __init__(self):
                 super().__init__()
-                backbone = tv_models.resnet50(weights=tv_models.ResNet50_Weights.IMAGENET1K_V2)
+                backbone = tv_models.resnet50(weights=weights)
                 # Kept as named attributes (not wrapped in nn.Sequential) so
                 # freeze_backbone_layers() below can target them by name.
                 self.conv1 = backbone.conv1

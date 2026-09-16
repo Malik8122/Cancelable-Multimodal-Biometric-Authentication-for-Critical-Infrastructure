@@ -43,7 +43,13 @@ class FingerprintEmbedder(BaseEmbedder):
         super().__init__(checkpoint_path=checkpoint_path, mock_mode=mock_mode)
 
     def _build_model(self):
-        return FingerprintEmbeddingNet(FingerprintConfig(embedding_dim=self.embedding_dim)).to(self.device)
+        # `_build_model` is only ever called from `_load_checkpoint` below,
+        # which immediately overwrites every weight via `load_state_dict` -
+        # `pretrained=False` skips materializing ImageNet weights that would
+        # just be discarded moments later (see FingerprintEmbeddingNet's
+        # docstring for the full rationale). The served model's weights are
+        # unaffected: they come entirely from the real checkpoint either way.
+        return FingerprintEmbeddingNet(FingerprintConfig(embedding_dim=self.embedding_dim), pretrained=False).to(self.device)
 
     def _load_checkpoint(self, checkpoint_path: Path) -> None:
         import torch

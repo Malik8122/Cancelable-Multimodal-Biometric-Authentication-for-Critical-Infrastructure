@@ -28,9 +28,44 @@ class FaceEmbedder(BaseEmbedder):
     def _build_model(self):
         from facenet_pytorch import InceptionResnetV1
 
-        # 'vggface2' pretrained weights are downloaded automatically by
-        # facenet-pytorch on first use and cached under ~/.cache/torch.
-        return InceptionResnetV1(pretrained="vggface2").eval().to(self.device)
+        # `_build_model` is only ever called from `_load_checkpoint` below,
+        # which immediately overwrites every weight via `load_state_dict` -
+        # so materializing the real VGGFace2-pretrained weights first (the
+        # default `pretrained="vggface2"`) is pure waste on this path: a
+        # real, measured contributor to peak memory during construction, and
+        # a real network download that never survives a restart on a
+        # platform with no persistent disk (see
+        # docs/AUTHENTICATION_RELIABILITY_REPORT.md's Render OOM
+        # investigation).
+        #
+        # Plain `pretrained=None` is NOT enough on its own: facenet-pytorch
+        # only creates the `logits` submodule (an `nn.Linear(512, 8631)`
+        # classification head) in the SAME branch that downloads/loads the
+        # real pretrained weights (`if pretrained is not None: self.logits =
+        # ...; load_weights(...)`), so the two can't be separated through
+        # that one argument. The project's checkpoint was saved from a model
+        # that *does* have this submodule (its state_dict includes
+        # `logits.weight`/`logits.bias`), so building without it makes
+        # `load_state_dict` fail with "Unexpected key(s): logits.weight,
+        # logits.bias" - confirmed by actually running this against the real
+        # checkpoint before settling on the fix below.
+        #
+        # `classify=True, num_classes=8631` creates that same `logits` shape
+        # through a *different*, independent branch in facenet-pytorch's
+        # `__init__` (`if self.classify and self.num_classes is not None:
+        # self.logits = ...`) that never touches the pretrained-weight
+        # download - giving the checkpoint somewhere to load its saved
+        # logits weights into, without ever materializing VGGFace2's real
+        # values. `classify` is flipped back to `False` immediately after
+        # construction, before this model is used for anything: `forward()`
+        # returns raw classification logits when `classify=True` and the
+        # L2-normalized embedding (what every caller here actually expects)
+        # when `False`. Verified directly against the real checkpoint: this
+        # produces bit-for-bit identical output (max abs diff 0.0) to the
+        # original `pretrained="vggface2"` construction path.
+        model = InceptionResnetV1(pretrained=None, classify=True, num_classes=8631)
+        model.classify = False
+        return model.eval().to(self.device)
 
     def _load_checkpoint(self, checkpoint_path: Path) -> None:
         import torch

@@ -38,6 +38,40 @@ logger = logging.getLogger("backend.api.fusion")
 router = APIRouter()
 
 
+def _release_modality_cache(modality: str) -> None:
+    """Drop the process-wide cached service/model for one modality.
+
+    `get_face_service`/`get_fingerprint_service`/`get_voice_service`
+    (`backend/services/*.py`) are `@lru_cache`d singletons that otherwise
+    stay resident for the process's entire life once loaded - on a 512MB
+    Render Free instance, a multi-modality fusion request that loads two or
+    three of them sequentially can push resident memory over the limit (see
+    docs/AUTHENTICATION_RELIABILITY_REPORT.md's Render OOM investigation).
+    This must only ever be called from `authenticate_fusion` below, and only
+    *after* that modality's `service.authenticate(...)` call has already
+    returned - never while it might still be executing. `cache_clear()`
+    alone doesn't force anything to happen immediately (a concurrently
+    running request already holding a reference to the old service object
+    keeps it alive via normal reference counting until it finishes; this is
+    exactly what makes clearing the cache here safe rather than disruptive)
+    - it only ensures *this* request no longer holds the process-wide
+    reference, so the object becomes eligible for reclamation once nothing
+    else references it either.
+    """
+    if modality == "face":
+        from backend.services.face_service import get_face_service
+
+        get_face_service.cache_clear()
+    elif modality == "fingerprint":
+        from backend.services.fingerprint_service import get_fingerprint_service
+
+        get_fingerprint_service.cache_clear()
+    elif modality == "voice":
+        from backend.services.voice_service import get_voice_service
+
+        get_voice_service.cache_clear()
+
+
 @router.post("/authenticate/fusion", response_model=FusionAuthenticateResponse)
 def authenticate_fusion(
     user_id: str = Form(...),
@@ -98,12 +132,30 @@ def authenticate_fusion(
     for modality, upload in provided.items():
         raw_input = decode_biometric_sample(modality, upload, settings)
         service = get_service_for_modality(modality)
-        # A multi-modality request fails closed as a whole (422 naming the
-        # bad modality) rather than silently fusing on an incomplete result
-        # - see backend/utils.py::call_modality_service.
-        result = call_modality_service(
-            service.authenticate, modality, db, raw_input, user_id=user_id, application_id=resolved_application_id
-        )
+        try:
+            # A multi-modality request fails closed as a whole (422 naming
+            # the bad modality) rather than silently fusing on an incomplete
+            # result - see backend/utils.py::call_modality_service.
+            result = call_modality_service(
+                service.authenticate, modality, db, raw_input, user_id=user_id, application_id=resolved_application_id
+            )
+        finally:
+            # Release this modality's cached service/model whether
+            # authenticate() succeeded or raised - so a multi-modality
+            # request never needs more than one modality's model resident in
+            # memory at a time, on either path. Without this `finally`, an
+            # exception other than the ValueError `call_modality_service`
+            # already translates above would skip straight past the release
+            # below, leaving that modality's model cached anyway - not worse
+            # than before H2 existed, but not covered by it either. `del
+            # service` drops this request's own reference alongside clearing
+            # the process-wide cache, exactly as before - only *when* this
+            # runs changed (guaranteed on every exit path, not just success).
+            # See _release_modality_cache's docstring for why this can't
+            # disrupt a concurrently running request.
+            del service
+            _release_modality_cache(modality)
+
         per_modality_results[modality] = ModalityAuthenticationResult(
             score=result.score,
             threshold=result.threshold,
