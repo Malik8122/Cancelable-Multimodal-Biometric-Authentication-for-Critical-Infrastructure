@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { AlertCircle, ArrowLeft, Check, Database, Fingerprint, KeyRound, Lock, Mic, ScanFace, ShieldCheck } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, Database, Fingerprint, KeyRound, Loader2, Lock, Mic, ScanFace, ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { enroll } from '../api/client'
@@ -15,7 +15,7 @@ import { useSession } from '../context/SessionContext'
 const APPLICATION_ID = 'ncisn-security-network'
 const ALL_MODALITIES: Array<'face' | 'fingerprint' | 'voice'> = ['face', 'fingerprint', 'voice']
 
-type Step = 'select' | 'capture' | 'privacy' | 'submitting' | 'success' | 'error'
+type Step = 'select' | 'capture' | 'privacy' | 'submitting' | 'securing' | 'success' | 'error'
 
 interface Captured {
   blob: Blob
@@ -38,7 +38,7 @@ const SHARED_STAGES: PipelineStage[] = [
   { key: 'hkdf', label: 'HKDF key generation', icon: KeyRound },
   { key: 'biohash', label: 'Cancelable BioHash', icon: Lock },
   { key: 'template', label: 'Protected template assembled', icon: ShieldCheck },
-  { key: 'store', label: 'Secure SQLite storage', icon: Database },
+  { key: 'store', label: 'Secure database storage', icon: Database },
 ]
 
 const MODALITY_ICON: Record<'face' | 'fingerprint' | 'voice', typeof ScanFace> = {
@@ -141,6 +141,13 @@ export function RegisterPage() {
     setErrorMessage(null)
     try {
       await runPipelineAnimation()
+      // The animation above is illustrative/timed, not tied to real request
+      // completion - it always finishes in ~3.3s regardless of how long the
+      // actual enroll() calls below take. Without a distinct phase here, the
+      // UI would sit on a fully-green, no-longer-animating checklist for
+      // however long the real (possibly slow: cold start, first-time model
+      // load, etc.) network requests take, indistinguishable from "stuck".
+      setStep('securing')
       const results: typeof enrolledResults = []
       for (const modality of modalities) {
         const sample = captured[modality]
@@ -235,6 +242,22 @@ export function RegisterPage() {
         {step === 'submitting' && (
           <motion.div key="submitting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <PipelineAnimation activeStage={pipelineStage} stages={pipelineStages} />
+          </motion.div>
+        )}
+
+        {step === 'securing' && (
+          <motion.div key="securing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-md text-center">
+            <motion.div
+              className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full border border-primary/30 bg-primary/10"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            >
+              <Loader2 className="h-6 w-6 text-primary" strokeWidth={1.5} />
+            </motion.div>
+            <p className="text-sm font-medium text-foreground">Securing biometric templates&hellip;</p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Finalizing secure enrollment - this can take a moment on a cold backend.
+            </p>
           </motion.div>
         )}
 
