@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { AlertCircle, ArrowLeft, Check, Fingerprint, Layers, Lock, Mic, ScanFace, ShieldQuestion, Sparkles } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { authenticateFusion } from '../api/client'
 import { ApiError, type Modality } from '../api/types'
@@ -55,10 +55,22 @@ export function AuthenticatePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [activeStep, setActiveStep] = useState(0)
   const [elapsedMs, setElapsedMs] = useState(0)
+  const [showSlowNotice, setShowSlowNotice] = useState(false)
   const timerRef = useRef<number | null>(null)
   const startedAtRef = useRef(0)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const steps = useMemo(() => buildProcessingSteps(selected), [selected])
+
+  // Abort an in-flight authentication request if the page is left before it
+  // settles - the request-scoped timers in handleSubmit are cleared in both
+  // its try/catch branches already, but a mid-flight unmount is a third way
+  // out that neither branch covers.
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort()
+    }
+  }, [])
 
   if (!building) {
     return (
@@ -109,6 +121,7 @@ export function AuthenticatePage() {
     setErrorMessage(null)
     setActiveStep(0)
     setElapsedMs(0)
+    setShowSlowNotice(false)
     startTimer()
 
     // Illustrative step cadence for the preprocessing/embedding/biohash/match
@@ -122,14 +135,30 @@ export function AuthenticatePage() {
       setActiveStep((s) => (s < illustrativeSteps ? s + 1 : s))
     }, 420)
 
+    // A real face+voice /authenticate/fusion request can legitimately take
+    // 50+ seconds on the free-tier backend (face and voice are processed
+    // sequentially, and either model may need to lazily load) - the notice
+    // at 15s is purely informational (never implies failure), and the abort
+    // at 90s is a generous ceiling for a genuinely hung request only; it must
+    // never fire on a real, still-progressing one.
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    const slowNoticeTimeoutId = window.setTimeout(() => setShowSlowNotice(true), 15_000)
+    const abortTimeoutId = window.setTimeout(() => controller.abort(), 90_000)
+
     try {
       const samples = selected.map((modality) => ({
         modality,
         sample: captured[modality]!.blob,
         filename: captured[modality]!.filename,
       }))
-      const result = await authenticateFusion(userId, APPLICATION_ID, samples, { buildingId: building.id })
+      const result = await authenticateFusion(userId, APPLICATION_ID, samples, {
+        buildingId: building.id,
+        signal: controller.signal,
+      })
       window.clearInterval(stepInterval)
+      window.clearTimeout(slowNoticeTimeoutId)
+      window.clearTimeout(abortTimeoutId)
       setActiveStep(steps.length)
       stopTimer()
       const finalLatency = Math.round(performance.now() - startedAtRef.current)
@@ -149,9 +178,20 @@ export function AuthenticatePage() {
       }, 500)
     } catch (error) {
       window.clearInterval(stepInterval)
+      window.clearTimeout(slowNoticeTimeoutId)
+      window.clearTimeout(abortTimeoutId)
       stopTimer()
       setPhase('error')
-      setErrorMessage(error instanceof ApiError ? error.detail : 'The backend is unreachable. Is uvicorn running?')
+      const timedOut = error instanceof DOMException && error.name === 'AbortError'
+      setErrorMessage(
+        timedOut
+          ? 'Verification timed out. Please try again.'
+          : error instanceof ApiError
+            ? error.detail
+            : 'The backend is unreachable. Is uvicorn running?',
+      )
+    } finally {
+      abortControllerRef.current = null
     }
   }
 
@@ -211,6 +251,18 @@ export function AuthenticatePage() {
             <div className="mb-8 text-center">
               <span className="text-4xl font-semibold tracking-tight text-foreground">{(elapsedMs / 1000).toFixed(2)}s</span>
               <p className="mt-1 text-xs text-muted-foreground">Elapsed time</p>
+              <AnimatePresence>
+                {showSlowNotice && (
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="mt-3 text-xs text-muted-foreground/80"
+                  >
+                    Still verifying - this can take longer when the backend has been inactive.
+                  </motion.p>
+                )}
+              </AnimatePresence>
             </div>
             <div className="space-y-2.5">
               {steps.map((s, i) => {

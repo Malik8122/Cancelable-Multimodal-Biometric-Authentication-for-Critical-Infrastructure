@@ -98,7 +98,7 @@ export async function authenticateFusion(
   userId: string,
   applicationId: string,
   samples: FusionSample[],
-  options?: { fusionPolicy?: FusionPolicy; buildingId?: string },
+  options?: { fusionPolicy?: FusionPolicy; buildingId?: string; signal?: AbortSignal },
 ): Promise<FusionAuthenticateResponse> {
   const form = new FormData()
   form.append('user_id', userId)
@@ -108,7 +108,11 @@ export async function authenticateFusion(
   for (const { modality, sample, filename } of samples) {
     form.append(FUSION_FIELD_NAME[modality], sample, filename)
   }
-  return request<FusionAuthenticateResponse>('/authenticate/fusion', { method: 'POST', body: form })
+  // `signal` is optional and passed straight through to fetch() (via
+  // request()'s existing RequestInit parameter) - only the caller that wants
+  // a client-side abort/timeout (AuthenticatePage.tsx) needs to pass one;
+  // every other caller/endpoint is unaffected.
+  return request<FusionAuthenticateResponse>('/authenticate/fusion', { method: 'POST', body: form, signal: options?.signal })
 }
 
 export async function revokeTemplate(
