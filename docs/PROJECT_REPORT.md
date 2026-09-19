@@ -101,6 +101,50 @@ The full diagram, the mock-mode fallback mechanism, and the classical-CV-vs-deep
 
 ---
 
+### 6.1 Final architecture: template-set cancelable authentication
+
+After the project review the backend was migrated to a **template-set** design (full write-up:
+`docs/MULTI_TEMPLATE_ARCHITECTURE.md`):
+
+- **Registration:** each modality's embedding is computed once and turned into one 256-bit BioHash
+  template per template set (HKDF key version = set version). Set 1 (Face V1 + Fingerprint V1 +
+  Voice V1) is `ACTIVE`; Sets 2-4 are `STANDBY`. A set is one complete multimodal credential; the
+  embeddings are discarded.
+- **Authentication:** only the `ACTIVE` set is used and templates of different sets are never mixed
+  (enforced by a runtime check). Per-modality similarities are fused server-side; the client only
+  receives **one fusion similarity**, the decision and the template set version. The per-modality
+  values live in the audit log. The denied screen shows no similarity.
+- **Revocation:** the whole `ACTIVE` set becomes `REVOKED` and the oldest `STANDBY` set becomes
+  `ACTIVE` for every modality at once, without re-capturing biometrics. An empty pool returns
+  HTTP 409 (re-enrollment required). Because there is no login, revoke / activate / generate first
+  require a biometric match against the ACTIVE set (HTTP 403 otherwise), so a stranger cannot
+  exhaust another user's set pool.
+- **Evidence:** `evaluation/template_set_experiments.py` (synthetic embeddings, three modalities per
+  set): templates of the same modality in different sets have mean pairwise Hamming similarity 0.500;
+  after revocation genuine users still score ~0.98 and all modalities switch set together (20/20); 80/80
+  genuine attempts are accepted across sets 1-4 with no mixed-set attempt; exhaustion is refused. These
+  test the template mathematics and lifecycle, not biometric accuracy.
+- **Honest limits:** everything still rests on `MASTER_SECRET` and on the embeddings not leaking. The
+  biometric authorization gate is only as strong as the biometric match (fingerprint accuracy is
+  weak); a real login layer is still recommended before real use.
+
+### 6.2 Flexible, user-driven multimodal authentication (V3)
+
+Enrollment and authentication are decided by the *user*; buildings supply only context (`docs/MULTI_TEMPLATE_ARCHITECTURE.md`):
+
+- **User Enrollment Profile** - which of face / fingerprint / voice are enrolled (`NOT_REGISTERED`, `REGISTERED`, `UPDATED`,
+  `RETRY_REQUIRED` for voice). Any subset, in any order.
+- **Buildings** - id, name, clearance level, description. No biometric policy (`config/buildings.json`).
+- **Authentication Engine** - `POST /authenticate/fusion` authenticates and fuses exactly the modalities the user submits. A
+  submitted modality that is not enrolled is **`ENROLLMENT_REQUIRED`** (HTTP 409): it is not authenticated, nothing is evaluated,
+  and it is audited as its own state - not as a failure. Otherwise the result is `ACCESS_GRANTED` or `ACCESS_DENIED`.
+
+Enrollment quality: face is a one-time five-pose enrollment (front, left, right, slight up, slight down) - per pose MTCNN + alignment + a 512-d FaceNet embedding, only blurry or
+faceless poses rejected, the valid embeddings averaged into a centroid, the temporary embeddings discarded and the templates generated from the centroid alone;
+voice takes two recordings and grades them by the ECAPA embedding cosine (Excellent/Good enrolled, Fair warns, Poor rejects and stores nothing). Template sets stay one revocable credential
+(T1 ACTIVE, T2-T4 STANDBY for every enrolled modality). All seven modality combinations enroll and authenticate independently through
+the same fusion engine (`tests/test_flexible_auth.py`).
+
 ## 7. Model and Dataset Decisions
 
 | Modality | Model | Why this model | Dataset | Why this dataset |

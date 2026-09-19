@@ -68,6 +68,8 @@ AUTHENTICATE / REJECT
 
 ## Project roadmap
 
+**Current architecture:** authentication is user-driven. Users enroll any subset of face / fingerprint / voice and choose which enrolled factors to present in each session; buildings are context only (no biometric policy). The backend authenticates and fuses exactly the submitted modalities - a modality that is not enrolled is `ENROLLMENT_REQUIRED`, not a denial. A user's credential is a pool of *template sets* (set 1 active, the rest standby) revoked as a whole, and only one fused similarity is exposed. See [`docs/MULTI_TEMPLATE_ARCHITECTURE.md`](docs/MULTI_TEMPLATE_ARCHITECTURE.md).
+
 Full detail in [`docs/ROADMAP.md`](docs/ROADMAP.md). Every phase advances all
 three modalities together — no modality is ever left behind.
 

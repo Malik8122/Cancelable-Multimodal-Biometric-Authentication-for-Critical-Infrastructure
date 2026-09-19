@@ -1,62 +1,82 @@
-"""POST /revoke-template: rotate a user's key and regenerate their protected template.
+"""POST /revoke-template: revoke the ACTIVE template set and activate the next STANDBY set.
 
-Requires a fresh image, not just `user_id`/`modality`: a protected template
-is a deliberately lossy transform (see
-`template_protection/biohash.py`'s non-invertibility discussion), so there is
-no way to derive "the same biometric under a new key" from the old stored
-template alone - only from re-capturing the biometric. See
-docs/BACKEND_API.md for this explicitly documented, since it differs from
-what a caller might assume from the spec's short `revoke_template(...)`
-example.
+Revocation is per SET: face, fingerprint and voice templates of the ACTIVE set
+become REVOKED together and the oldest STANDBY set becomes ACTIVE for every
+modality at once. No login exists, so the caller must first authenticate
+against the ACTIVE set - a fresh capture of every modality it contains
+(`face_image`, `fingerprint_image`, `voice_audio`, `iris_image`); failure is
+HTTP 403. With no STANDBY set left: 409 "Template set pool exhausted.
+Re-enrollment required." (nothing changes).
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.config import Settings, get_settings
+from backend.database import crud
 from backend.database.schema import RevokeResponse
 from backend.database.session import get_db
-from backend.services import get_service_for_modality
-from backend.utils import call_modality_service, decode_image, validate_upload
+from backend.services import template_sets
 
 logger = logging.getLogger("backend.api.revoke")
 
 router = APIRouter()
 
 
+def collect_uploads(
+    face_image: UploadFile | None,
+    fingerprint_image: UploadFile | None,
+    voice_audio: UploadFile | None,
+    iris_image: UploadFile | None,
+) -> dict[str, UploadFile]:
+    return {
+        modality: upload
+        for modality, upload in (
+            ("face", face_image),
+            ("fingerprint", fingerprint_image),
+            ("iris", iris_image),
+            ("voice", voice_audio),
+        )
+        if upload is not None
+    }
+
+
 @router.post("/revoke-template", response_model=RevokeResponse)
 def revoke_template_endpoint(
     user_id: str = Form(...),
-    modality: str = Form(...),
     application_id: str | None = Form(None),
-    image: UploadFile = File(...),
+    reason: str | None = Form(None),
+    face_image: UploadFile | None = File(None),
+    fingerprint_image: UploadFile | None = File(None),
+    voice_audio: UploadFile | None = File(None),
+    iris_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> RevokeResponse:
-    contents = image.file.read()
-    validate_upload(image, contents, settings)
-    raw_image = decode_image(contents)
-
     resolved_application_id = application_id or settings.application_id
-    service = get_service_for_modality(modality)
+    try:
+        revoked, promoted, remaining = template_sets.revoke_active_set(
+            db,
+            settings,
+            user_id=user_id,
+            application_id=resolved_application_id,
+            uploads=collect_uploads(face_image, fingerprint_image, voice_audio, iris_image),
+            reason=reason,
+        )
+    except crud.TemplateNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except crud.TemplatePoolExhaustedError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
-    revocation = call_modality_service(
-        service.revoke, modality, db, raw_image, user_id=user_id, application_id=resolved_application_id
-    )
-    logger.info(
-        "Revoked user_id=%s modality=%s old_key_version=%d new_key_version=%d",
-        user_id, modality, revocation.old_key_version, revocation.new_key_version,
-    )
-
+    logger.info("Revoked user_id=%s set v%d -> v%d remaining_standby=%d", user_id, revoked, promoted, remaining)
     return RevokeResponse(
         success=True,
         user_id=user_id,
-        modality=modality,
-        old_key_version=revocation.old_key_version,
-        new_key_version=revocation.new_key_version,
-        template_id=revocation.template.template_id,
+        revoked_template_set_version=revoked,
+        new_active_template_set_version=promoted,
+        remaining_standby_template_sets=remaining,
     )

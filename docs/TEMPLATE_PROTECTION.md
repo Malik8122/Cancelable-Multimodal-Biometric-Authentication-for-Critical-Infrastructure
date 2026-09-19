@@ -129,26 +129,46 @@ templates derived under different keys share no positional structure at all -
 this is what the revocability/diversity experiments in
 `evaluation/privacy_metrics.py` measure.
 
-## Revocation workflow
+## Revocation workflow (template sets)
+
+Enrollment derives, from each modality's embedding, one template per **template set**, each
+under its own key version. A template set is a complete multimodal credential and the unit of
+revocation (full design: `docs/MULTI_TEMPLATE_ARCHITECTURE.md`):
 
 ```text
-Template v1 (key_version=1)
-     |  revoke_template(embedding, master_secret, ..., new_key_version=2)
-     v
-Template v2 (key_version=2)   <- ~50% Hamming distance from v1, unlinkable
+                 Face          Fingerprint        Voice
+Template Set 1   V1  ---HKDF v1--  V1  ---HKDF v1--  V1  ---HKDF v1--   ACTIVE
+Template Set 2   V2  ---HKDF v2--  V2  ---HKDF v2--  V2  ---HKDF v2--   STANDBY
+Template Set 3   V3                V3                V3                 STANDBY
+Template Set 4   V4                V4                V4                 STANDBY
+                 (embeddings discarded after generation)
+
+revoke:  Set 1 ACTIVE -> REVOKED,  Set 2 STANDBY -> ACTIVE   (all three modalities together)
 ```
 
-`revoke.py::revoke_template` re-derives key material at `new_key_version` and
-regenerates the template from scratch. **A fresh biometric capture is
-required** - a protected template is a deliberately lossy transform (see
-below), so there is no way to compute "the same biometric under a new key"
-from an old *template* alone. `backend/api/revoke.py` reflects this: its
-request body includes a new image, not just an identifier.
+Authentication regenerates each candidate under the ACTIVE set's key versions and compares it
+with that set's template only; a runtime check refuses to authenticate if active rows ever come
+from different sets. Because each key version yields a statistically unrelated template (~0.50
+Hamming similarity), a revoked set is unlinkable to its replacement. With no STANDBY set left,
+revocation returns HTTP 409 and the user must re-enroll (or generate a new set with a capture
+that authenticates against the active one).
 
-`backend/database/models.py::ProtectedTemplate.key_version` tracks this per
-(user, modality, application); `backend/database/crud.py::save_template`
-deactivates the previous row rather than deleting it, keeping an audit trail
-of past rotations.
+A template set contains templates only for the modalities enrolled at that moment. Enrolling another modality
+later generates that modality's templates for the existing live sets under fresh key versions and leaves the other
+modalities' stored templates untouched (byte for byte), so the set stays one credential.
+
+Revocation and the other management actions need no login; they require **biometric
+authorization** - a fresh capture that authenticates against the ACTIVE set (403 otherwise) - so a
+stranger cannot exhaust another user's set pool.
+
+The earlier design - `revoke.py::revoke_template` re-deriving at `new_key_version` from a *fresh
+capture* - remains as a library function, but `POST /revoke-template` no longer re-keys anything: a
+protected template is a lossy transform and cannot be re-keyed after the fact, so the replacement
+sets are generated while the embeddings are available and stored as STANDBY.
+
+`backend/database/crud.py::revoke_active_set_and_promote` performs the transition in one
+transaction; partial unique indexes guarantee one ACTIVE row per modality and one live template per
+modality per set.
 
 ## Diversity workflow
 

@@ -71,8 +71,22 @@ class FaceEmbedder(BaseEmbedder):
         import torch
 
         self._model = self._build_model()
-        state_dict = torch.load(checkpoint_path, map_location=self.device)
-        self._model.load_state_dict(state_dict)
+        # `mmap=True` avoids fully materializing the checkpoint file into a
+        # separate anonymous allocation before applying it; `assign=True`
+        # replaces this model's (randomly-initialized) parameter tensors
+        # directly with the loaded ones instead of copying values into the
+        # already-allocated originals, letting those originals be freed
+        # immediately rather than staying resident alongside the newly
+        # loaded state_dict. Measured directly against this real checkpoint
+        # (see docs/AUTHENTICATION_RELIABILITY_REPORT.md's Render OOM
+        # investigation): this turns the loading step's memory delta from
+        # +109 MB into a net -28 MB, with bit-for-bit identical output.
+        state_dict = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            mmap=True,
+        )
+        self._model.load_state_dict(state_dict, assign=True)
         self._model.eval()
 
     def _extract_embedding_impl(self, image: np.ndarray) -> np.ndarray:

@@ -45,8 +45,10 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def init_db() -> None:
-    """Create every table that doesn't already exist. Called once at app startup."""
-    Base.metadata.create_all(bind=get_engine())
+    """Create missing tables and upgrade an older schema in place. Called once at app startup."""
+    from backend.database.migration import upgrade_schema
+
+    upgrade_schema(get_engine())
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getSystemHealth } from '../api/client'
-import type { FusionAuthenticateResponse, Modality, SystemHealthResponse } from '../api/types'
+import type { Modality, SystemHealthResponse } from '../api/types'
 
 const USER_ID_KEY = 'biometric-demo.user-id'
 const LOG_KEY = 'biometric-demo.performance-log'
@@ -23,11 +23,10 @@ export interface PerformanceLogEntry {
   timestamp: string
   buildingId: string
   modalitiesUsed: Modality[]
-  fusedScore: number
+  fusionSimilarity: number
   fusionThreshold: number
   authenticated: boolean
   latencyMs: number
-  perModality: FusionAuthenticateResponse['results']
 }
 
 function loadLog(): PerformanceLogEntry[] {

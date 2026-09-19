@@ -43,10 +43,12 @@ def test_enroll_then_authenticate_with_the_same_image_succeeds(db_session, synth
     # so it can't exercise a real enroll/authenticate roundtrip offline.
     service = _get_fingerprint_service()
 
-    enrolled = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
+    pool = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
+    enrolled = pool[0]
     assert enrolled.modality == "fingerprint"
     assert enrolled.key_version == 1
     assert enrolled.is_active is True
+    assert len(pool) == 4
 
     result = service.authenticate(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     assert result.authenticated is True
@@ -62,32 +64,36 @@ def test_authenticate_without_enrollment_fails_closed(db_session, synthetic_fing
     assert result.score == 0.0
 
 
-def test_revoke_bumps_key_version_and_regenerates_the_template(db_session, synthetic_fingerprint_image):
+def test_revoke_promotes_the_next_set_and_the_same_biometric_still_authenticates(db_session, synthetic_fingerprint_image):
     from backend.database import crud
 
     service = _get_fingerprint_service()
-    original = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
-    original_bytes = original.protected_template
+    pool = service.enroll(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
+    original_bytes = pool[0].protected_template
 
-    revocation = service.revoke(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
-    assert revocation.old_key_version == 1
-    assert revocation.new_key_version == 2
-    assert revocation.template.key_version == 2
-    assert revocation.template.is_active is True
+    revoked, promoted = crud.revoke_active_set_and_promote(db_session, "U001", APPLICATION_ID)
+    assert (revoked, promoted) == (1, 2)
+    summaries = {s.version: s.status for s in crud.get_template_sets(db_session, "U001", APPLICATION_ID)}
+    assert summaries == {1: "REVOKED", 2: "ACTIVE", 3: "STANDBY", 4: "STANDBY"}
 
-    # The stored template content actually changed - proves rotation
-    # regenerated the template, not just bumped a version number.
-    assert revocation.template.protected_template != original_bytes
-
-    # The old (key_version=1) row is no longer the active one.
     active = crud.get_active_template(db_session, "U001", "fingerprint", APPLICATION_ID)
-    assert active.key_version == 2
-    assert active.template_id == revocation.template.template_id
+    assert active.template_set_version == 2 and active.key_version == 2 and active.is_active is True
+    # a different key over the same embedding: genuinely different template bits
+    assert active.protected_template != original_bytes
 
-    # Authenticating again re-derives the key from the *current*
-    # (post-rotation) key_version, so the same biometric still authenticates.
     result = service.authenticate(db_session, synthetic_fingerprint_image, user_id="U001", application_id=APPLICATION_ID)
     assert result.authenticated is True
+    assert result.key_version == 2 and result.template_set_version == 2
+
+
+def test_revoke_without_a_prior_enrollment_is_not_found(db_session):
+    import pytest as _pytest
+
+    from backend.database import crud
+
+    with _pytest.raises(crud.TemplateNotFoundError):
+        crud.revoke_active_set_and_promote(db_session, "U004", APPLICATION_ID)
+    assert crud.get_user(db_session, "U004") is None
 
 
 def test_iris_service_runs_end_to_end_in_mock_mode(db_session, synthetic_eye_image):
@@ -117,56 +123,26 @@ def test_get_iris_service_returns_the_same_cached_instance():
     assert get_iris_service() is get_iris_service()
 
 
-def test_revoke_without_a_prior_enrollment_still_creates_the_user_row(db_session, synthetic_eye_image):
-    """Regression test: revoke() must create the User row like enroll() does,
-    or the resulting ProtectedTemplate is orphaned - reachable by
-    /authenticate but invisible to (and undeletable via) /user/{id}."""
-    from backend.database import crud
-
-    service = get_iris_service()
-    assert crud.get_user(db_session, "U004") is None
-
-    revocation = service.revoke(db_session, synthetic_eye_image, user_id="U004", application_id=APPLICATION_ID)
-    assert revocation.old_key_version == 0
-    assert revocation.new_key_version == 1
-
-    user = crud.get_user(db_session, "U004")
-    assert user is not None
-    assert crud.get_templates_for_user(db_session, "U004") == [revocation.template]
-
-    deleted_count = crud.delete_user_templates(db_session, "U004")
-    assert deleted_count == 1
-
-
 def test_concurrent_active_template_insert_is_rejected_at_the_db_level(db_session, synthetic_eye_image, monkeypatch):
-    """Simulates two racing requests both reading 'no active template yet'
-    before either commits, then both trying to insert their own active row -
-    exactly the race crud.save_template's read-then-deactivate-then-insert
-    sequence can't prevent on its own (see its docstring): the second call's
-    `get_active_template` read happens before the first call's insert is
-    visible to it, so it doesn't know to deactivate anything.
-
-    Reproduced deterministically here by patching `get_active_template` to
-    always report "nothing active" for the second `save_template` call, so
-    it skips deactivation and its insert collides with the first call's
-    already-committed active row at the DB level. That collision, and its
-    ConcurrentEnrollmentError, are the real thing under test - the patch
-    only forces the timing.
-    """
+    """Two racing requests both read 'no template sets yet' before either commits, then both
+    try to create the ACTIVE set. Reproduced deterministically by making the second
+    `save_modality_templates` see no existing rows, so its insert collides with the first
+    call's committed ACTIVE row at the DB level (partial unique indexes on `ProtectedTemplate`).
+    That collision, and its ConcurrentEnrollmentError, are what is under test - the patch only
+    forces the timing."""
     from backend.database import crud
     from backend.database.crud import ConcurrentEnrollmentError
 
     get_iris_service().enroll(db_session, synthetic_eye_image, user_id="U005", application_id=APPLICATION_ID)
 
-    monkeypatch.setattr(crud, "get_active_template", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crud, "get_set_rows", lambda *args, **kwargs: [])
     with pytest.raises(ConcurrentEnrollmentError):
-        crud.save_template(
+        crud.save_modality_templates(
             db_session,
             user_id="U005",
-            modality="iris",
             application_id=APPLICATION_ID,
+            modality="iris",
             template_version=1,
-            key_version=2,
             output_bits=128,
-            protected_template=b"\x00",
+            entries={1: crud.PoolEntry(key_version=99, protected_template=b"\x00")},
         )

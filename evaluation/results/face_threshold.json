@@ -1,0 +1,10 @@
+{
+  "modality": "face",
+  "threshold": 0.8,
+  "source": "operator-specified",
+  "eer": null,
+  "far": null,
+  "frr": null,
+  "auc": null,
+  "note": "Operator-specified threshold, deliberately held at 0.80: the operator rejected lowering it because a lower face threshold would also accept AI-generated / synthetic face images as real. The 0.90 fallback (= an embedding cosine of about 0.95 between enrolled and live capture) denied genuine users; a real user's logged face attempts scored 0.738-0.820 (mean ~0.77), so most of them fall below 0.80 - see docs/AUTHENTICATION_RELIABILITY_REPORT.md. Not derived from a genuine/impostor calibration run, so no measured FAR/FRR/EER. Delete this file to restore the 0.90 fallback."
+}

@@ -2,7 +2,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BuildingSilhouette } from '../components/campus/BuildingSilhouette'
-import { BUILDINGS, type Building } from '../config/buildings'
+import type { Building } from '../config/buildings'
+import { useBuildings } from '../context/BuildingsContext'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 
 const STARS = Array.from({ length: 18 }, (_, i) => ({
@@ -13,6 +14,7 @@ const STARS = Array.from({ length: 18 }, (_, i) => ({
 
 export function LandingPage() {
   const navigate = useNavigate()
+  const { buildings, status: buildingsStatus, error: buildingsError, reload } = useBuildings()
   const reducedMotion = useReducedMotion()
   const [hovered, setHovered] = useState<string | null>(null)
   const [entering, setEntering] = useState<Building | null>(null)
@@ -71,8 +73,23 @@ export function LandingPage() {
           </p>
         </div>
 
+        {buildingsStatus !== 'ready' && (
+          <div className="mx-auto mt-auto text-center text-sm text-white/70">
+            {buildingsStatus === 'loading' ? (
+              'Loading facilities...'
+            ) : (
+              <>
+                <p className="mb-2">Facilities could not be loaded: {buildingsError}</p>
+                <button onClick={reload} className="rounded-lg border border-white/25 px-4 py-1.5 text-xs text-white hover:border-white/50">
+                  Retry
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <div className="mt-auto grid grid-cols-2 items-end gap-x-4 gap-y-10 sm:flex sm:items-end sm:justify-center sm:gap-10 md:gap-16">
-          {BUILDINGS.map((building, i) => (
+          {buildings.map((building, i) => (
             <motion.button
               key={building.id}
               type="button"
@@ -149,7 +166,7 @@ export function LandingPage() {
                   animate={{ scale: 2.6, opacity: 0 }}
                   transition={{ duration: 1.3, ease: [0.4, 0, 0.2, 1] }}
                 >
-                  <BuildingSilhouette seed={BUILDINGS.indexOf(entering) + 1} brightness={1} className="h-64 w-36" />
+                  <BuildingSilhouette seed={buildings.indexOf(entering) + 1} brightness={1} className="h-64 w-36" />
                 </motion.div>
                 <motion.div
                   className="absolute top-1/2 left-1/2 h-40 w-3 -translate-y-1/2 bg-[#0b1736]"

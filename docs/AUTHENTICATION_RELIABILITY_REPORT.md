@@ -3,6 +3,90 @@
 **Sprint:** Phase 2.7 — Authentication Reliability Sprint (root-cause pass)
 **Scope:** Backend only (`preprocessing/`, `template_protection/`, `fusion/`, `backend/`, `evaluation/`). No UI, API contract, or database schema changes. **No threshold was changed. `ALL_REQUIRED` remains the default fusion policy.**
 
+## Debug: "genuine user denied after the multi-template migration" (Phase 3B.1)
+
+**Reported:** a user enrolled face + fingerprint + voice and was `ACCESS_DENIED` when authenticating right after.
+
+**Investigation (real face / fingerprint / voice models, real TTS speech, real HTTP layer, no stubs):**
+
+- Enrollment integrity: 4 sets x 3 modalities, exactly one ACTIVE row per modality, all in set 1; `template_version` is the
+  BioHash format version (1), the pool position is `template_set_version`; key version == set version. Correct.
+- Authentication reads only the ACTIVE set-1 rows (a spy on `crud.get_active_template` saw nothing else); all three
+  modality results enter fusion; identical files -> similarity 1.0000 for each -> `ACCESS_GRANTED`.
+- **No regression in matching:** `git diff` of `preprocessing/`, `embeddings/`, `template_protection/` (HKDF, BioHash),
+  `fusion/` and `backend/threshold_loader.py` against the pre-migration commit is empty (only the uncommitted face
+  checkpoint loader differs). The same samples score *identically to four decimals* under (A) the pre-migration code,
+  (B) the new code on that old database after migration, and (C) the new code with a fresh enrollment.
+- Genuine recaptures pass with realistic variation (face 0.906-1.0, fingerprint 0.97-0.99, voice 0.94-1.0). Browser sample
+  rates (16 / 44.1 / 48 kHz) are handled consistently. What flips a genuine voice is additive microphone noise (0.75-0.80 at
+  sigma=0.01) - a property of the voice pipeline against the *uncalibrated 0.90* threshold (no `*_threshold.json` exists),
+  unchanged by the migration and consistent with the earlier real-user incident (0.898 / 0.719).
+
+**Real defect found and fixed:** the voice enrollment consistency check (enroll take 1, then verify take 2) left an ACTIVE
+voice template when the check failed. Fix: `POST /enroll` accepts `confirm_image`; `ModalityService.enroll` compares the two
+samples first and raises `EnrollmentInconsistent` before writing anything (`backend/services/base_service.py`,
+`backend/api/enroll.py`). Tests: `tests/test_genuine_auth_regression.py`. With `DEBUG_SCORES=true` the backend now logs
+`AUTH-DEBUG` (per modality) and `FUSION-DEBUG` (fusion stage) lines - metadata only, never embeddings or templates.
+
+## Genuine face and voice users denied at the 0.90 threshold (V3.2)
+
+**Reported:** the same person, enrolled and then authenticating with face + voice, got ACCESS_DENIED with "Verified Factors: None".
+
+**Evidence** (audit log of the real attempts, user `OPERATOR-UWKAMM`): fingerprint 1.000 (the identical file), face 0.754 / 0.766 / 0.820,
+voice 0.797 / 0.848 / 0.879 - all genuine, all below the 0.90 fallback (no `*_threshold.json` existed). No code defect was found: the matching
+path, the migration and the enrollment flows were checked earlier and unchanged.
+
+**Root cause:** the threshold is applied to the 256-bit *protected-template* Hamming similarity, which saturates far below the embedding
+cosine. Measured with the project's BioHash (25 random pairs per row, same key):
+
+| enrolled-to-live embedding cosine | face (512-d) | voice (192-d) |
+|---|---|---|
+| 0.98 | 0.941 | 0.939 |
+| 0.95 | 0.909 | 0.909 |
+| 0.90 | 0.879 | 0.870 |
+| 0.80 | 0.814 | 0.816 |
+| 0.75 | 0.797 | 0.800 |
+| 0.60 | 0.741 | 0.734 |
+| 0.50 | 0.723 | 0.704 |
+| 0.30 | 0.639 | 0.638 |
+| 0.00 | 0.547 | 0.558 |
+
+So 0.90 demands an embedding cosine of about **0.95** between the enrolled and the live capture. Real webcam / microphone captures of the same
+person typically give 0.7-0.9, i.e. template similarity 0.78-0.88 - exactly the observed scores. (A different speaker measured 0.51-0.56 cosine =
+0.72-0.74 template similarity.)
+
+**Change (operator decision):** `evaluation/results/face_threshold.json` and `voice_threshold.json` set the threshold to **0.80**; fingerprint and iris
+keep the 0.90 fallback. These files are marked `"source": "operator-specified"` with no FAR/FRR/EER - the number was chosen, not measured, and
+`/metrics/{modality}` reports only the threshold for them. Delete a file to restore 0.90; replace it with `scripts/calibrate_protected_thresholds.py`
+output once real multi-person data exists.
+
+**What 0.80 does and does not fix:** of the three logged attempts (ALL_REQUIRED face + voice) only the first (face 0.820, voice 0.848) would now pass; the
+second fails on face 0.766 and the third on face 0.754 / voice 0.797. A face threshold near 0.72-0.75 would be needed to accept all three, at the cost of a
+smaller margin over impostors (different people give template similarity <= ~0.66 for face, ~0.74 for the one different speaker tested). The margin between
+0.80 and the impostor range is real but has only been measured on a handful of samples.
+
+### Follow-up: face stays at 0.80 (operator decision)
+
+With face at 0.80 the same user was still mostly denied: fifteen logged genuine face attempts scored 0.738-0.859 (mean 0.784; only 5 of 15 reached 0.80).
+Face was briefly set to 0.72 and then **reset to 0.80** at the operator's instruction: a lower face threshold would also let AI-generated / synthetic face images
+through as real. Face therefore remains 0.80 (voice 0.80, fingerprint / iris 0.90 fallback).
+
+Consequence to be aware of: at 0.80 most of this user's genuine face captures still fall below the threshold. The threshold is not the right lever for the
+underlying problem, and it is also not a defence against synthetic images - resisting AI-generated or replayed faces needs a liveness / presentation-attack check,
+which this system does not have. Why the real face scores ~0.77 rather than ~0.9 is not established; one suspect is the five-pose centroid, but a test with warped
+copies of one portrait (cosine to the frontal image 0.89-0.97) neither confirms nor rules that out. Answering it needs real captures - e.g. one person enrolled once
+with the frontal image only and once with the five poses, then compared on fresh frontal captures.
+
+## Voice enrollment consistency check: from strict to graded (V3.1)
+
+The first version compared the two enrollment recordings through BioHash with the 0.90 authentication threshold. That measures a
+fragile 256-bit hash, not speaker identity, and rejected genuine users after natural variation (e.g. moderate microphone noise).
+It now uses the **cosine similarity of the two ECAPA-TDNN embeddings** in four bands - Excellent >= 0.85, Good 0.75-0.84, Fair 0.60-0.74
+(warn, user decides), Poor < 0.60 (reject) - so only clearly mismatched recordings are rejected. Real-model measurements: same speaker
+0.98-0.99, with mic noise 0.66-0.73, different speaker 0.51-0.56. Authentication thresholds, fusion, template generation and the T1-T4 pool
+are unchanged. Note the genuine *authentication* sensitivity to noise (BioHash Hamming vs the 0.90 threshold) described below is a
+separate matter and was not touched.
+
 ## 128 vs 256-bit BioHash migration
 
 Following the statistical-separability investigation below, `Settings.template_bits` (`backend/config.py`) was raised from 128 to **256** for all new enrollments/revocations. `ModalityService.authenticate` already regenerated the candidate template at the *stored* template's own `output_bits` (not this setting), so this change cannot cause an old 128-bit template to be silently compared at the wrong bit length — no architectural change was needed for that safety property, it already existed. `template_version` (`TEMPLATE_FORMAT_VERSION`) was deliberately **not** bumped: the transform algorithm itself is unchanged, only its bit-length parameter, and `output_bits` is already its own per-row column that fully distinguishes old (128) from new (256) templates.

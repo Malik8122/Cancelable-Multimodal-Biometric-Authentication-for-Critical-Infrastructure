@@ -17,7 +17,7 @@ from models.face.inference import FaceEmbedder
 from models.fingerprint.inference import FingerprintEmbedder
 from models.iris.inference import IrisEmbedder
 from models.voice.inference import VoiceEmbedder
-from preprocessing.face import FacePreprocessor
+from preprocessing.face import BLUR_MIN_SHARPNESS, FacePreprocessor
 from preprocessing.fingerprint import FingerprintPreprocessor
 from preprocessing.iris import IrisPreprocessor
 from preprocessing.voice import TARGET_SAMPLE_RATE, VoicePreprocessor
@@ -48,6 +48,36 @@ class ModalityPipeline:
 class FacePipeline(ModalityPipeline):
     def __init__(self, checkpoint_path: str | Path | None = DEFAULT_CHECKPOINTS["face"], device: str = "cpu"):
         super().__init__(FacePreprocessor(device=device), FaceEmbedder(checkpoint_path=checkpoint_path, device=device))
+
+    def check_capture(self, image: np.ndarray) -> str:
+        """Verdict for one enrollment pose: VALID, NO_FACE or BLURRY (nothing is embedded)."""
+        try:
+            _, _, sharpness = self._preprocessor.detect_and_align(image)
+        except ValueError:
+            return "NO_FACE"
+        return "BLURRY" if sharpness < BLUR_MIN_SHARPNESS else "VALID"
+
+    def embed_poses(self, captures: list[tuple[str, np.ndarray]]) -> tuple[list[np.ndarray], list[dict]]:
+        """Multi-pose enrollment: one embedding per VALID capture, plus a per-pose report.
+
+        Each capture goes through the existing MTCNN detection + alignment; it is rejected only when no face is found
+        or the aligned crop is blurry. Valid ones are embedded by the unchanged FaceNet model (the same call
+        authentication makes). Returns (embeddings of the valid poses, [{"pose", "status"}, ...] for every capture).
+        """
+        embeddings: list[np.ndarray] = []
+        report: list[dict] = []
+        for pose, image in captures:
+            try:
+                aligned, _, sharpness = self._preprocessor.detect_and_align(image)
+            except ValueError:
+                report.append({"pose": pose, "status": "NO_FACE"})
+                continue
+            if sharpness < BLUR_MIN_SHARPNESS:
+                report.append({"pose": pose, "status": "BLURRY"})
+                continue
+            embeddings.append(self._embedder.extract_embedding(aligned))
+            report.append({"pose": pose, "status": "VALID"})
+        return embeddings, report
 
 
 class IrisPipeline(ModalityPipeline):

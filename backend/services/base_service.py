@@ -1,15 +1,23 @@
-"""Shared enroll/authenticate/revoke logic, parameterized by modality.
+"""Shared enroll/authenticate logic, parameterized by modality.
 
-Face, iris, and fingerprint enrollment/authentication are identical *except*
-for which `embeddings.pipelines.ModalityPipeline` does the preprocessing +
-embedding - so that difference is the only thing `face_service.py`,
-`iris_service.py`, and `fingerprint_service.py` each supply; everything else
-(deriving keys, generating/storing/comparing protected templates) lives here
-once.
+Template-set architecture (docs/MULTI_TEMPLATE_ARCHITECTURE.md): a user's
+credential is a pool of TEMPLATE SETS (version 1..N); each set holds one
+protected template per enrolled modality. `enroll(modality)` embeds the
+sample ONCE and writes that modality's template into every planned set - set v
+under its own HKDF key_version - so after face, fingerprint and voice are all
+enrolled, every set contains all three. `authenticate` only ever reads the
+modality's row inside the ACTIVE set. Revocation / activation / new-set
+generation move whole sets and live in `backend/database/crud.py` and
+`backend/services/template_sets.py` (they need no model).
+
+Face, iris, fingerprint, and voice are identical *except* for which
+`embeddings.pipelines.ModalityPipeline` does the preprocessing + embedding -
+the only thing `face_service.py` etc. supply.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -19,13 +27,17 @@ from backend.config import Settings
 from backend.database import crud
 from backend.database.models import ProtectedTemplate
 from backend.security_validation import assert_valid, validate_authentication
+from backend.services.face_enrollment import MIN_VALID_POSES, FaceCaptureRejected
+from backend.services.recording_quality import FAIR, FAIR_MESSAGE, POOR, POOR_MESSAGE, classify, cosine_similarity
 from backend.threshold_loader import get_modality_threshold
+from embeddings.centroid import centroid_embedding
 from embeddings.pipelines import ModalityPipeline
 from template_protection.biohash import TEMPLATE_FORMAT_VERSION, generate_template
 from template_protection.hkdf_keys import derive_key
 from template_protection.matcher import accept, compare
-from template_protection.revoke import revoke_template
 from template_protection.utils import pack_bits, unpack_bits
+
+logger = logging.getLogger("backend.services.base_service")
 
 
 @dataclass(frozen=True)
@@ -33,30 +45,64 @@ class AuthenticationResult:
     score: float
     threshold: float
     authenticated: bool
-    #: 1 - score: the Hamming-distance complement of `score`, exposed for
-    #: debugging/evaluation (0.0 when nothing was enrolled - there is no
-    #: comparison to report a distance for).
+    #: 1 - score. INTERNAL: per-modality values never leave the backend unless
+    #: `Settings.debug_scores` is on (they are always audit-logged).
     distance: float = 0.0
-    #: Which template_version/key_version the stored template being
-    #: compared against was generated under (0 when nothing is enrolled).
+    #: BioHash format version of the stored template (0 when nothing is enrolled).
     template_version: int = 0
     key_version: int = 0
+    #: Version of the ACTIVE template set that was compared (0 when nothing is enrolled).
+    template_set_version: int = 0
 
 
-@dataclass(frozen=True)
-class RevocationResult:
-    old_key_version: int
-    new_key_version: int
-    template: ProtectedTemplate
+class EnrollmentInconsistent(RuntimeError):
+    """POOR band: the two recordings are too dissimilar (cosine < 0.60) - different speakers or too noisy.
+
+    Raised BEFORE anything is stored: nothing (no ACTIVE, no STANDBY template) exists for this modality afterwards,
+    so it stays NOT ENROLLED (or keeps its previous enrollment) and can never authenticate.
+    """
+
+    def __init__(self, modality: str, similarity: float):
+        super().__init__(f"{POOR_MESSAGE} Nothing was enrolled - please record again.")
+        self.modality = modality
+        self.similarity = similarity
+        self.quality = POOR
+
+
+class LowQualityWarning(RuntimeError):
+    """FAIR band (0.60 <= cosine < 0.75): usable, but below the recommended quality.
+
+    Raised BEFORE anything is stored. The caller may repeat the enrollment with `accept_low_quality=True` to continue
+    (the templates are then stored), or the user can re-record.
+    """
+
+    def __init__(self, modality: str, similarity: float):
+        super().__init__(FAIR_MESSAGE)
+        self.modality = modality
+        self.similarity = similarity
+        self.quality = FAIR
+
+
+def build_entry(
+    settings: Settings, embedding: np.ndarray, *, user_id: str, application_id: str, modality: str, key_version: int
+) -> crud.PoolEntry:
+    """One protected template from `embedding` under HKDF key `key_version`."""
+    key = derive_key(
+        settings.master_secret,
+        application_id=application_id,
+        user_id=user_id,
+        modality=modality,
+        key_version=key_version,
+    )
+    bits = generate_template(embedding, key, output_bits=settings.template_bits)
+    return crud.PoolEntry(key_version=key_version, protected_template=pack_bits(bits))
 
 
 class ModalityService:
-    """Enroll/authenticate/revoke for one biometric modality.
+    """Enroll/authenticate for one biometric modality.
 
-    `pipeline` does preprocessing + embedding
-    (`embeddings.pipelines.{Face,Iris,Fingerprint}Pipeline`) - this class
-    never re-implements or duplicates that; it only ever calls
-    `pipeline.embed(raw_image)`.
+    `pipeline` does preprocessing + embedding - this class never
+    re-implements that; it only ever calls `pipeline.embed(raw_image)`.
     """
 
     def __init__(self, modality: str, pipeline: ModalityPipeline, settings: Settings):
@@ -64,59 +110,142 @@ class ModalityService:
         self.pipeline = pipeline
         self.settings = settings
 
-    def enroll(self, db: Session, raw_image: np.ndarray, user_id: str, application_id: str) -> ProtectedTemplate:
-        """Preprocess -> embed -> derive key -> generate + store a protected template.
+    def embed(self, raw_image: np.ndarray) -> np.ndarray:
+        return self.pipeline.embed(raw_image)
 
-        Always starts a fresh `key_version` sequence position via
-        `crud.next_key_version` rather than reusing key_version=1 blindly, so
-        re-enrolling after a revocation naturally continues the same
-        rotation history instead of colliding with an old, deactivated
-        template's key_version.
+    def check_capture(self, raw_image: np.ndarray) -> str:
+        """Verdict for one enrollment capture (face: VALID / NO_FACE / BLURRY). Modalities without a check: VALID."""
+        checker = getattr(self.pipeline, "check_capture", None)
+        return "VALID" if checker is None else checker(raw_image)
+
+    def enroll_poses(
+        self, db: Session, captures: list[tuple[str, np.ndarray]], user_id: str, application_id: str
+    ) -> tuple[list[ProtectedTemplate], list[dict]]:
+        """One-time multi-pose enrollment (face): embeddings -> centroid -> templates. Returns (rows, per-pose report).
+
+        Every capture is detected + aligned + embedded (blurry / faceless ones are rejected and reported). The valid
+        embeddings are averaged and L2-normalized into a CENTROID (`embeddings/centroid.py`), the temporary
+        embeddings are discarded at once, and the T1-T4 template sets are generated from the centroid ALONE through
+        the unchanged HKDF + BioHash path. Only the protected templates are stored. `FaceCaptureRejected` (nothing
+        stored) when fewer than `MIN_VALID_POSES` captures are usable.
         """
+        embeddings, report = self.pipeline.embed_poses(captures)
+        try:
+            if len(embeddings) < MIN_VALID_POSES:
+                raise FaceCaptureRejected(report)
+            centroid = centroid_embedding(embeddings)
+        finally:
+            embeddings.clear()  # the temporary per-pose embeddings are gone from here on
+        try:
+            if self.settings.debug_scores:
+                logger.info("ENROLL-DEBUG modality=%s poses=%d valid=%d centroid_dim=%d",
+                            self.modality, len(report), sum(r["status"] == "VALID" for r in report), centroid.shape[0])
+            return self._store(db, centroid, user_id, application_id), report
+        finally:
+            del centroid
+
+    def enroll(self, db: Session, raw_image: np.ndarray, user_id: str, application_id: str) -> list[ProtectedTemplate]:
+        """Preprocess -> embed ONCE -> one template per template set -> store.
+
+        Writes into every set `crud.plan_enrollment_sets` names: for a new user, `TEMPLATE_POOL_SIZE` new sets (v1
+        ACTIVE, the rest STANDBY); for a user who already has sets, every live set (so a second or third modality
+        joins them, and re-enrolling a modality replaces its templates inside them - key versions are never
+        reused). Returns this modality's created rows in set order. The embedding is dropped as soon as the
+        templates exist.
+        """
+        embedding = self.embed(raw_image)
+        try:
+            return self._store(db, embedding, user_id, application_id)
+        finally:
+            del embedding
+
+    def enroll_confirmed(
+        self,
+        db: Session,
+        raw_image: np.ndarray,
+        confirm_raw: np.ndarray,
+        user_id: str,
+        application_id: str,
+        accept_low_quality: bool = False,
+    ) -> tuple[list[ProtectedTemplate], str]:
+        """Voice enrollment from two recordings, gated by an embedding-similarity quality check. Returns (rows, quality).
+
+        Both recordings are embedded and compared by the COSINE SIMILARITY of the embeddings (see
+        `backend/services/recording_quality.py`) BEFORE anything is written:
+
+        - EXCELLENT (>= 0.85) / GOOD (0.75-0.84): enrolled.
+        - FAIR (0.60-0.74): `LowQualityWarning` - nothing stored unless `accept_low_quality=True`, in which case enrolled.
+        - POOR (< 0.60): `EnrollmentInconsistent` - rejected, nothing stored.
+
+        The templates come from the FIRST recording, exactly as for a single-sample enrollment.
+        """
+        first = self.embed(raw_image)
+        second = self.embed(confirm_raw)
+        try:
+            similarity = cosine_similarity(first, second)
+            quality = classify(similarity)
+            if self.settings.debug_scores:
+                logger.info("ENROLL-DEBUG modality=%s embedding_cosine=%.4f quality=%s accept_low_quality=%s",
+                            self.modality, similarity, quality, accept_low_quality)
+            if quality == POOR:
+                raise EnrollmentInconsistent(self.modality, similarity)
+            if quality == FAIR and not accept_low_quality:
+                raise LowQualityWarning(self.modality, similarity)
+            return self._store(db, first, user_id, application_id), quality
+        finally:
+            del first, second
+
+    def _store(self, db: Session, embedding: np.ndarray, user_id: str, application_id: str) -> list[ProtectedTemplate]:
+        first_key_version = crud.next_key_version(db, user_id, self.modality, application_id)
         crud.get_or_create_user(db, user_id)
-        embedding = self.pipeline.embed(raw_image)
-
-        key_version = crud.next_key_version(db, user_id, self.modality, application_id)
-        key = derive_key(
-            self.settings.master_secret,
-            application_id=application_id,
-            user_id=user_id,
-            modality=self.modality,
-            key_version=key_version,
-        )
-        template_bits = generate_template(embedding, key, output_bits=self.settings.template_bits)
-
-        return crud.save_template(
+        set_versions = crud.plan_enrollment_sets(db, user_id, application_id, self.settings.template_pool_size)
+        entries = {
+            set_version: build_entry(
+                self.settings,
+                embedding,
+                user_id=user_id,
+                application_id=application_id,
+                modality=self.modality,
+                key_version=first_key_version + offset,
+            )
+            for offset, set_version in enumerate(set_versions)
+        }
+        return crud.save_modality_templates(
             db,
             user_id=user_id,
-            modality=self.modality,
             application_id=application_id,
+            modality=self.modality,
             template_version=TEMPLATE_FORMAT_VERSION,
-            key_version=key_version,
             output_bits=self.settings.template_bits,
-            protected_template=pack_bits(template_bits),
+            entries=entries,
         )
 
     def authenticate(self, db: Session, raw_image: np.ndarray, user_id: str, application_id: str) -> AuthenticationResult:
-        """Preprocess -> embed -> regenerate the template under the stored key_version -> compare.
+        """Preprocess -> embed -> regenerate under the ACTIVE set's key -> compare with the ACTIVE set's template.
 
-        Returns `score=0.0, authenticated=False` (rather than raising) when
-        nothing is enrolled for this (user, modality, application) - a
-        missing enrollment and a failed match are both "not authenticated"
-        from the caller's point of view.
-
-        The threshold compared against is resolved per-modality from real
-        calibration data when it exists (`backend/threshold_loader.py`),
-        falling back to `Settings.match_threshold` with a logged warning
-        otherwise - no modality ever hardcodes 0.9 directly anymore.
+        STANDBY and REVOKED sets are never read. Returns `score=0.0,
+        authenticated=False` (rather than raising) when nothing is enrolled.
+        The threshold is per-modality from real calibration data when present
+        (`backend/threshold_loader.py`), else `Settings.match_threshold`.
         """
         threshold = get_modality_threshold(self.modality, self.settings.match_threshold)
+        if crud.get_active_template(db, user_id, self.modality, application_id) is None:
+            return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)
+        embedding = self.embed(raw_image)
+        try:
+            return self.authenticate_embedding(db, embedding, user_id, application_id)
+        finally:
+            del embedding
 
+    def authenticate_embedding(
+        self, db: Session, embedding: np.ndarray, user_id: str, application_id: str
+    ) -> AuthenticationResult:
+        """Compare an already-computed embedding with the ACTIVE set's template for this modality."""
+        threshold = get_modality_threshold(self.modality, self.settings.match_threshold)
         stored = crud.get_active_template(db, user_id, self.modality, application_id)
         if stored is None:
             return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)
 
-        embedding = self.pipeline.embed(raw_image)
         key = derive_key(
             self.settings.master_secret,
             application_id=application_id,
@@ -128,13 +257,28 @@ class ModalityService:
         stored_template = unpack_bits(stored.protected_template, num_bits=stored.output_bits)
 
         assert_valid(
-            validate_authentication(settings=self.settings, stored=stored, key=key, candidate_template_bits=candidate_template),
+            validate_authentication(
+                settings=self.settings,
+                stored=stored,
+                key=key,
+                candidate_template_bits=candidate_template,
+                pool=crud.get_set_rows(db, user_id, application_id),
+            ),
             modality=self.modality,
             user_id=user_id,
         )
 
         score = compare(candidate_template, stored_template, metric="hamming")
         authenticated = accept(score, threshold=threshold, metric="hamming")
+        if self.settings.debug_scores:
+            # DEBUG ONLY (DEBUG_SCORES=true): metadata about each stage - never the embedding or template itself.
+            norm = float(np.linalg.norm(embedding))
+            logger.info(
+                "AUTH-DEBUG modality=%s embedding_dim=%d normalized=%s biohash_bits=%d active_template=(set=%d,key=%d,status=%s) "
+                "hamming=%.4f threshold=%.2f match=%s",
+                self.modality, embedding.shape[0], abs(norm - 1.0) < 1e-3, len(candidate_template),
+                stored.template_set_version, stored.key_version, stored.template_status, score, threshold, authenticated,
+            )
         return AuthenticationResult(
             score=score,
             threshold=threshold,
@@ -142,50 +286,5 @@ class ModalityService:
             distance=1.0 - score,
             template_version=stored.template_version,
             key_version=stored.key_version,
+            template_set_version=stored.template_set_version,
         )
-
-    def revoke(self, db: Session, raw_image: np.ndarray, user_id: str, application_id: str) -> RevocationResult:
-        """Rotate the key for (user, modality, application) and store the resulting new template.
-
-        A fresh biometric capture (`raw_image`) is required: a protected
-        template is a deliberately lossy transform of the embedding (see
-        template_protection/biohash.py's non-invertibility discussion), so
-        there is no way to derive "the same biometric under a new key" from
-        an old *template* alone - only from the embedding again.
-
-        Ensures the `User` row exists (mirroring `enroll`), so that revoking
-        a user_id that was never `/enroll`ed doesn't insert a
-        `ProtectedTemplate` referencing a nonexistent user - which would
-        otherwise be unreachable through `GET`/`DELETE /user/{id}` (both key
-        off the `User` row) while still being live for `/authenticate`.
-        """
-        crud.get_or_create_user(db, user_id)
-
-        # crud.next_key_version already encodes "1 if nothing active, else
-        # active.key_version + 1"; reusing it here (rather than re-deriving
-        # the same rule from a second get_active_template call) keeps this
-        # single rule in one place.
-        new_key_version = crud.next_key_version(db, user_id, self.modality, application_id)
-        old_key_version = new_key_version - 1
-
-        embedding = self.pipeline.embed(raw_image)
-        new_template_bits = revoke_template(
-            embedding,
-            self.settings.master_secret,
-            application_id=application_id,
-            user_id=user_id,
-            modality=self.modality,
-            new_key_version=new_key_version,
-            output_bits=self.settings.template_bits,
-        )
-        saved = crud.save_template(
-            db,
-            user_id=user_id,
-            modality=self.modality,
-            application_id=application_id,
-            template_version=TEMPLATE_FORMAT_VERSION,
-            key_version=new_key_version,
-            output_bits=self.settings.template_bits,
-            protected_template=pack_bits(new_template_bits),
-        )
-        return RevocationResult(old_key_version=old_key_version, new_key_version=new_key_version, template=saved)

@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from backend.config import Settings, get_settings
 from backend.database import crud
-from backend.database.schema import DeleteUserResponse, EnrolledModality, UserModalitiesResponse
+from backend.database.schema import (
+    DeleteUserResponse,
+    EnrolledModality,
+    EnrollmentStatusResponse,
+    UserModalitiesResponse,
+)
 from backend.database.session import get_db
+from backend.services import enrollment
 
 logger = logging.getLogger("backend.api.user")
 
@@ -35,6 +42,20 @@ def get_user_modalities(user_id: str, db: Session = Depends(get_db)) -> UserModa
             )
             for template in templates
         ],
+    )
+
+
+@router.get("/user/{user_id}/enrollment-status", response_model=EnrollmentStatusResponse)
+def get_enrollment_status(
+    user_id: str,
+    application_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> EnrollmentStatusResponse:
+    """User Enrollment Profile: which modalities are enrolled. Unknown users simply have none (200)."""
+    status_ = enrollment.get_user_enrollment_status(db, user_id, application_id or settings.application_id)
+    return EnrollmentStatusResponse(
+        user_id=user_id, application_id=status_.application_id, modalities=status_.modalities, statuses=status_.statuses
     )
 
 

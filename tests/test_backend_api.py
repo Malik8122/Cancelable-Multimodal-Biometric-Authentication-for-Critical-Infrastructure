@@ -97,14 +97,17 @@ def test_authenticate_after_enroll_succeeds(client, synthetic_eye_image):
     assert body["score"] >= body["threshold"]
 
 
-def test_authenticate_without_enrollment_returns_not_authenticated(client, synthetic_eye_image):
+def test_authenticate_without_enrollment_returns_enrollment_required(client, synthetic_eye_image):
+    """A submitted modality that was never enrolled is ENROLLMENT_REQUIRED (409) - not authenticated, not a denial."""
     response = client.post(
         "/authenticate",
         data={"user_id": "never-enrolled", "modality": "iris", "application_id": APPLICATION_ID},
         files={"image": ("sample.png", _encode_png(synthetic_eye_image), "image/png")},
     )
-    assert response.status_code == 200
-    assert response.json()["authenticated"] is False
+    assert response.status_code == 409
+    body = response.json()
+    assert body["status"] == "ENROLLMENT_REQUIRED" and body["missing_modalities"] == ["iris"]
+    assert "authenticated" not in body and "fusion_similarity" not in body
 
 
 def test_verify_iris_matches_authenticate_behavior(client, synthetic_eye_image):
@@ -124,15 +127,18 @@ def test_revoke_template_rotates_key_version(client, synthetic_eye_image):
     image_bytes = _encode_png(synthetic_eye_image)
     _enroll(client, image_bytes)
 
+    # Revocation is per template SET: it needs biometric authorization against the
+    # ACTIVE set, then promotes the oldest STANDBY set (all modalities together).
     response = client.post(
         "/revoke-template",
-        data={"user_id": "U001", "modality": "iris", "application_id": APPLICATION_ID},
-        files={"image": ("sample.png", image_bytes, "image/png")},
+        data={"user_id": "U001", "application_id": APPLICATION_ID},
+        files={"iris_image": ("sample.png", image_bytes, "image/png")},
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["old_key_version"] == 1
-    assert body["new_key_version"] == 2
+    assert body["revoked_template_set_version"] == 1
+    assert body["new_active_template_set_version"] == 2
+    assert body["remaining_standby_template_sets"] == 2
 
     # Re-authenticating still succeeds (re-derives under the new key_version).
     auth_response = client.post(
@@ -164,7 +170,8 @@ def test_delete_user_removes_templates(client, synthetic_eye_image):
 
     delete_response = client.delete("/user/U001")
     assert delete_response.status_code == 200
-    assert delete_response.json()["templates_deleted"] == 1
+    # one enrollment = a pool of TEMPLATE_POOL_SIZE (default 4) templates
+    assert delete_response.json()["templates_deleted"] == 4
 
     assert client.get("/user/U001").status_code == 404
 

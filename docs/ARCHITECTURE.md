@@ -31,20 +31,26 @@
                       |
                       v
           template_protection/hkdf_keys.py + biohash.py
-          (keyed orthonormal projection -> keyed quantize -> keyed permute)
+   (HKDF key v1..vN -> keyed orthonormal projection -> keyed quantize -> keyed permute)
                       |
                       v
-              Protected Biometric Template
+     Template SET pool (each set = one template per enrolled modality):
+        Set 1 [Face V1|Fingerprint V1|Voice V1]  ACTIVE
+        Sets 2..N  (same shape)                  STANDBY
                       |
                       v
-           backend/ (FastAPI + SQLite: templates only)
-                      |
-                      v                              [Phase 3]
-              fusion/score_fusion.py
-        (configurable weighted multimodal fusion)
+   backend/ (FastAPI + SQLite/PostgreSQL: protected templates + set lifecycle only)
+                      |   authentication compares the ACTIVE set only, never mixing sets
+                      v
+              fusion/ (ALL_REQUIRED | AT_LEAST_TWO | WEIGHTED)
+        per-modality similarities stay internal -> ONE fusion similarity
                       |
                       v
-              AUTHENTICATE / REJECT
+              ACCESS GRANTED / ACCESS DENIED
+
+  Revocation: ACTIVE set -> REVOKED, oldest STANDBY set -> ACTIVE, all modalities together
+  (authorized by a biometric match against the ACTIVE set; 409 when the set pool is exhausted).
+  Details: docs/MULTI_TEMPLATE_ARCHITECTURE.md
 ```
 
 ## Why one interface for three very different modalities
@@ -104,3 +110,22 @@ refuse to use mock embeddings outside of tests/demos.
 All three fine-tuning heads use the same ArcFace-style loss
 (`models/common/arcface.py`) so the three modalities are trained consistently
 rather than with three different, harder-to-compare recipes.
+
+## Flexible multimodal authentication (V3)
+
+The user decides which modalities to enroll and which to present; a building is context only (details:
+`docs/MULTI_TEMPLATE_ARCHITECTURE.md`):
+
+```text
+  User Enrollment Profile        Building (context only)          Authentication Engine
+  which modalities the user      id, name, clearance level,       authenticates + fuses EXACTLY the
+  enrolled: NOT_REGISTERED /     description - no biometric       modalities the user submits
+  REGISTERED / UPDATED /         policy (config/buildings.json)   (POST /authenticate/fusion)
+  RETRY_REQUIRED (voice)                 |                                  ^
+            \____________ submitted modalities all enrolled? _____________/
+                      no  -> ENROLLMENT_REQUIRED (409, nothing verified)
+                      yes -> fuse the submitted modalities -> ACCESS_GRANTED | ACCESS_DENIED
+```
+
+Template sets hold templates only for the modalities enrolled so far (T1 ACTIVE, T2-T4 STANDBY for each); enrolling another
+modality later adds its templates to the existing live sets without regenerating the others.

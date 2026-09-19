@@ -8,16 +8,25 @@
 // backend/services/base_service.py) and simply passed through as-is.
 
 import type {
+  ActivateResponse,
   AuditHistoryResponse,
   AuthenticateResponse,
+  AuthenticationOutcome,
+  BuildingInfo,
   EnrollResponse,
+  EnrollmentRequiredResponse,
+  FacePose,
+  FacePoseCheckResponse,
+  EnrollmentStatusResponse,
   FusionAuthenticateResponse,
   FusionPolicy,
+  GenerateSetResponse,
   Modality,
   ModalityMetricsResponse,
   RevokeResponse,
   SystemAuditResponse,
   SystemHealthResponse,
+  TemplateSetPoolResponse,
   UserModalitiesResponse,
 } from './types'
 import { ApiError } from './types'
@@ -28,13 +37,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, init)
   if (!response.ok) {
     let detail = response.statusText
+    let body: unknown
     try {
-      const body = await response.json()
-      detail = body.detail ?? detail
+      body = await response.json()
+      const parsed = (body as { detail?: unknown }).detail
+      if (typeof parsed === 'string') detail = parsed
     } catch {
       // Body wasn't JSON (e.g. a proxy error page) - keep statusText.
     }
-    throw new ApiError(response.status, detail)
+    throw new ApiError(response.status, detail, body)
   }
   if (response.status === 204) {
     return undefined as T
@@ -59,14 +70,24 @@ function biometricForm(
   return form
 }
 
+export interface EnrollOptions {
+  /** Voice: the second recording. Enrollment is all-or-nothing - inconsistent recordings store nothing (422). */
+  confirm?: { sample: Blob; filename: string }
+  /** Voice: continue with FAIR-quality recordings (the backend otherwise answers 409 LOW_QUALITY_WARNING, storing nothing). */
+  acceptLowQuality?: boolean
+}
+
 export async function enroll(
   modality: Modality,
   userId: string,
   applicationId: string,
   sample: Blob,
   filename: string,
+  options?: EnrollOptions,
 ): Promise<EnrollResponse> {
   const form = biometricForm(userId, applicationId, sample, filename, { modality })
+  if (options?.confirm) form.append('confirm_image', options.confirm.sample, options.confirm.filename)
+  if (options?.acceptLowQuality) form.append('accept_low_quality', 'true')
   return request<EnrollResponse>('/enroll', { method: 'POST', body: form })
 }
 
@@ -79,6 +100,25 @@ export async function verify(
 ): Promise<AuthenticateResponse> {
   const form = biometricForm(userId, applicationId, sample, filename)
   return request<AuthenticateResponse>(`/verify/${modality}`, { method: 'POST', body: form })
+}
+
+// One-time face enrollment from the five guided poses. Send them in one request; the backend embeds each valid pose, averages
+// the embeddings into a centroid, discards them, and generates the template sets from the centroid alone.
+export async function enrollFace(userId: string, applicationId: string, poses: Record<FacePose, Blob>): Promise<EnrollResponse> {
+  const form = new FormData()
+  form.append('user_id', userId)
+  form.append('application_id', applicationId)
+  form.append('modality', 'face')
+  for (const [pose, blob] of Object.entries(poses) as [FacePose, Blob][]) form.append(`pose_${pose}`, blob, `face-${pose}.jpg`)
+  return request<EnrollResponse>('/enroll', { method: 'POST', body: form })
+}
+
+// Immediate verdict for ONE captured pose (VALID / NO_FACE / BLURRY) so the guided UI can ask for a retake. Stores nothing.
+export async function checkFacePose(pose: FacePose, sample: Blob, filename: string): Promise<FacePoseCheckResponse> {
+  const form = new FormData()
+  form.append('pose', pose)
+  form.append('image', sample, filename)
+  return request<FacePoseCheckResponse>('/enroll/face/check-pose', { method: 'POST', body: form })
 }
 
 export interface FusionSample {
@@ -99,7 +139,7 @@ export async function authenticateFusion(
   applicationId: string,
   samples: FusionSample[],
   options?: { fusionPolicy?: FusionPolicy; buildingId?: string; signal?: AbortSignal },
-): Promise<FusionAuthenticateResponse> {
+): Promise<AuthenticationOutcome> {
   const form = new FormData()
   form.append('user_id', userId)
   form.append('application_id', applicationId)
@@ -112,18 +152,86 @@ export async function authenticateFusion(
   // request()'s existing RequestInit parameter) - only the caller that wants
   // a client-side abort/timeout (AuthenticatePage.tsx) needs to pass one;
   // every other caller/endpoint is unaffected.
-  return request<FusionAuthenticateResponse>('/authenticate/fusion', { method: 'POST', body: form, signal: options?.signal })
+  try {
+    return await request<FusionAuthenticateResponse>('/authenticate/fusion', { method: 'POST', body: form, signal: options?.signal })
+  } catch (error) {
+    // 409 ENROLLMENT_REQUIRED is a legitimate third outcome, not an error: hand it to the caller as a result.
+    const body = error instanceof ApiError ? (error.body as Partial<EnrollmentRequiredResponse> | undefined) : undefined
+    if (error instanceof ApiError && error.status === 409 && body?.status === 'ENROLLMENT_REQUIRED') {
+      return body as EnrollmentRequiredResponse
+    }
+    throw error
+  }
 }
 
-export async function revokeTemplate(
-  modality: Modality,
+// --- Buildings (context) + the user's enrollment profile -----------------
+export async function getBuildings(): Promise<BuildingInfo[]> {
+  return request<BuildingInfo[]>('/buildings')
+}
+
+export async function getEnrollmentStatus(userId: string, applicationId: string): Promise<EnrollmentStatusResponse> {
+  return request<EnrollmentStatusResponse>(
+    `/user/${encodeURIComponent(userId)}/enrollment-status?application_id=${encodeURIComponent(applicationId)}`,
+  )
+}
+
+// --- Template sets ---------------------------------------------------------
+// Revoking, activating and generating template sets all require biometric
+// authorization: a fresh capture of EVERY modality the ACTIVE set contains
+// (the backend answers 403 otherwise). There is no login layer.
+export type AuthorizationCaptures = Partial<Record<Modality, { blob: Blob; filename: string }>>
+
+function authorizationForm(userId: string, applicationId: string, captures: AuthorizationCaptures): FormData {
+  const form = new FormData()
+  form.append('user_id', userId)
+  form.append('application_id', applicationId)
+  for (const [modality, capture] of Object.entries(captures) as [Modality, { blob: Blob; filename: string }][]) {
+    form.append(FUSION_FIELD_NAME[modality], capture.blob, capture.filename)
+  }
+  return form
+}
+
+export async function getTemplateSets(userId: string, applicationId: string): Promise<TemplateSetPoolResponse | null> {
+  try {
+    return await request<TemplateSetPoolResponse>(
+      `/templates/${encodeURIComponent(userId)}?application_id=${encodeURIComponent(applicationId)}`,
+    )
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
+  }
+}
+
+// Revoke the ACTIVE set; the oldest STANDBY set becomes ACTIVE for every modality (409 when none is left).
+export async function revokeTemplateSet(
   userId: string,
   applicationId: string,
-  sample: Blob,
-  filename: string,
+  captures: AuthorizationCaptures,
 ): Promise<RevokeResponse> {
-  const form = biometricForm(userId, applicationId, sample, filename, { modality })
-  return request<RevokeResponse>('/revoke-template', { method: 'POST', body: form })
+  return request<RevokeResponse>('/revoke-template', { method: 'POST', body: authorizationForm(userId, applicationId, captures) })
+}
+
+export async function activateTemplateSet(
+  userId: string,
+  applicationId: string,
+  version: number,
+  captures: AuthorizationCaptures,
+): Promise<ActivateResponse> {
+  return request<ActivateResponse>(`/templates/${encodeURIComponent(userId)}/activate/${version}`, {
+    method: 'POST',
+    body: authorizationForm(userId, applicationId, captures),
+  })
+}
+
+export async function generateTemplateSet(
+  userId: string,
+  applicationId: string,
+  captures: AuthorizationCaptures,
+): Promise<GenerateSetResponse> {
+  return request<GenerateSetResponse>(`/templates/${encodeURIComponent(userId)}/generate`, {
+    method: 'POST',
+    body: authorizationForm(userId, applicationId, captures),
+  })
 }
 
 export async function getUser(userId: string): Promise<UserModalitiesResponse | null> {

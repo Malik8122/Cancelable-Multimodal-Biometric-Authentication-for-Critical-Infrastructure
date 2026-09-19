@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { authenticateFusion, BASE_URL, enroll, getMetrics, verify } from '../../api/client'
+import { ApiError } from '../../api/types'
 import { syntheticFingerprintPng, syntheticToneWav } from '../../utils/syntheticSamples'
 
 const APPLICATION_ID = 'ncisn-security-network-testcases'
@@ -27,8 +28,8 @@ const TEST_CASES: TestCase[] = [
       await enroll('fingerprint', userId, APPLICATION_ID, png, 'fp.png')
       const result = await verify('fingerprint', userId, APPLICATION_ID, png, 'fp.png')
       return {
-        pass: result.authenticated && result.score >= result.threshold,
-        detail: `score=${result.score.toFixed(4)} threshold=${result.threshold} distance=${result.distance.toFixed(4)}`,
+        pass: result.authenticated && result.fusion_similarity >= result.fusion_threshold,
+        detail: `fusion_similarity=${result.fusion_similarity.toFixed(4)} threshold=${result.fusion_threshold.toFixed(2)} set=v${result.template_set_version}`,
       }
     },
   },
@@ -42,20 +43,28 @@ const TEST_CASES: TestCase[] = [
       await enroll('voice', userId, APPLICATION_ID, wav, 'voice.wav')
       const result = await verify('voice', userId, APPLICATION_ID, wav, 'voice.wav')
       return {
-        pass: result.authenticated && result.score >= result.threshold,
-        detail: `score=${result.score.toFixed(4)} threshold=${result.threshold} distance=${result.distance.toFixed(4)}`,
+        pass: result.authenticated && result.fusion_similarity >= result.fusion_threshold,
+        detail: `fusion_similarity=${result.fusion_similarity.toFixed(4)} threshold=${result.fusion_threshold.toFixed(2)} set=v${result.template_set_version}`,
       }
     },
   },
   {
     id: 'voice-no-enrollment',
     command: 'POST /verify/voice (never enrolled)',
-    description: 'Fails closed: never-enrolled user gets score=0.0, not an error',
+    description: 'Never-enrolled user: ENROLLMENT_REQUIRED (409), not a score and not a denial',
     run: async () => {
       const userId = freshUserId('TC-NEW')
       const wav = syntheticToneWav()
-      const result = await verify('voice', userId, APPLICATION_ID, wav, 'voice.wav')
-      return { pass: !result.authenticated && result.score === 0, detail: `score=${result.score} authenticated=${result.authenticated}` }
+      try {
+        await verify('voice', userId, APPLICATION_ID, wav, 'voice.wav')
+        return { pass: false, detail: 'expected HTTP 409 ENROLLMENT_REQUIRED' }
+      } catch (error) {
+        const body = error instanceof ApiError ? (error.body as { status?: string; missing_modalities?: string[] } | undefined) : undefined
+        return {
+          pass: error instanceof ApiError && error.status === 409 && body?.status === 'ENROLLMENT_REQUIRED',
+          detail: `status=${body?.status} missing=[${body?.missing_modalities}]`,
+        }
+      }
     },
   },
   {
@@ -72,9 +81,42 @@ const TEST_CASES: TestCase[] = [
         { modality: 'fingerprint', sample: png, filename: 'fp.png' },
         { modality: 'voice', sample: wav, filename: 'voice.wav' },
       ])
+      if (result.status === 'ENROLLMENT_REQUIRED') return { pass: false, detail: `unexpected ENROLLMENT_REQUIRED missing=[${result.missing_modalities}]` }
       return {
         pass: result.authenticated && result.fusion_policy === 'ALL_REQUIRED' && result.matched_modalities.length === 2,
-        detail: `fused_score=${result.fused_score.toFixed(4)} policy=${result.fusion_policy} matched=[${result.matched_modalities}]`,
+        detail: `fusion_similarity=${result.fusion_similarity.toFixed(4)} policy=${result.fusion_policy} matched=[${result.matched_modalities}]`,
+      }
+    },
+  },
+  {
+    id: 'enrollment-required',
+    command: 'POST /authenticate/fusion (a submitted modality is not enrolled)',
+    description: 'ENROLLMENT_REQUIRED (409) is its own outcome - not ACCESS_DENIED - and nothing is verified',
+    run: async () => {
+      const userId = freshUserId('TC-ER')
+      const png = await syntheticFingerprintPng()
+      await enroll('fingerprint', userId, APPLICATION_ID, png, 'fp.png') // voice is never enrolled
+      const result = await authenticateFusion(userId, APPLICATION_ID, [
+        { modality: 'fingerprint', sample: png, filename: 'fp.png' },
+        { modality: 'voice', sample: syntheticToneWav(), filename: 'voice.wav' },
+      ])
+      return {
+        pass: result.status === 'ENROLLMENT_REQUIRED' && result.missing_modalities.includes('voice'),
+        detail: `status=${result.status}${result.status === 'ENROLLMENT_REQUIRED' ? ` missing=[${result.missing_modalities}]` : ''}`,
+      }
+    },
+  },
+  {
+    id: 'voice-two-recordings',
+    command: 'POST /enroll (voice, image + confirm_image)',
+    description: 'Voice from two recordings: the backend reports the recording quality band (ECAPA cosine) and enrolls',
+    run: async () => {
+      const userId = freshUserId('TC-V2')
+      const wav = syntheticToneWav()
+      const response = await enroll('voice', userId, APPLICATION_ID, wav, 'a.wav', { confirm: { sample: syntheticToneWav(), filename: 'b.wav' } })
+      return {
+        pass: response.templates_created > 0 && (response.recording_quality === 'EXCELLENT' || response.recording_quality === 'GOOD'),
+        detail: `recording_quality=${response.recording_quality} templates_created=${response.templates_created}`,
       }
     },
   },

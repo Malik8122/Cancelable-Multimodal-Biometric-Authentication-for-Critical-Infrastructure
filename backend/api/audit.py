@@ -13,30 +13,48 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from backend.config import Settings, get_settings
 from backend.database import audit as audit_crud
 from backend.database.schema import AuditHistoryResponse, AuditLogEntry, DeleteAuditResponse, SystemAuditResponse
 from backend.database.session import get_db
+from backend.states import ACCESS_DENIED, ACCESS_GRANTED
 
 logger = logging.getLogger("backend.api.audit")
 
 router = APIRouter()
 
 
-def _to_entry(row) -> AuditLogEntry:
+def _to_entry(row, settings: Settings) -> AuditLogEntry:
+    """Per-modality similarities are stored in every row but only returned with DEBUG_SCORES=true."""
+    debug = {}
+    if settings.debug_scores:
+        debug = dict(
+            similarity_scores=row.similarity_scores,
+            thresholds_used=row.thresholds_used,
+            face_similarity=row.face_similarity,
+            fingerprint_similarity=row.fingerprint_similarity,
+            voice_similarity=row.voice_similarity,
+            fusion_score=row.fusion_score,
+        )
     return AuditLogEntry(
         audit_id=row.audit_id,
         timestamp=row.timestamp,
         user_id=row.user_id,
         building_id=row.building_id,
         modality_list=row.modality_list,
-        similarity_scores=row.similarity_scores,
-        thresholds_used=row.thresholds_used,
-        fusion_score=row.fusion_score,
+        fusion_similarity=row.fusion_similarity if row.fusion_similarity is not None else row.fusion_score,
         fusion_policy=row.fusion_policy,
+        template_set_version=row.template_set_version,
+        template_set_status=row.template_set_status,
+        authentication_state=row.authentication_state or (ACCESS_GRANTED if row.authenticated else ACCESS_DENIED),
+        submitted_modalities=row.submitted_modalities,
+        enrolled_modalities=row.enrolled_modalities,
+        authenticated_modalities=row.authenticated_modalities,
         authenticated=row.authenticated,
         latency_ms=row.latency_ms,
         template_versions=row.template_versions,
         key_versions=row.key_versions,
+        **debug,
     )
 
 
@@ -44,10 +62,11 @@ def _to_entry(row) -> AuditLogEntry:
 def get_system_audit(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> SystemAuditResponse:
     """Latest authentication attempts across every user, newest first."""
     rows = audit_crud.get_system_history(db, limit=limit)
-    return SystemAuditResponse(entries=[_to_entry(row) for row in rows])
+    return SystemAuditResponse(entries=[_to_entry(row, settings) for row in rows])
 
 
 @router.get("/audit/{user_id}", response_model=AuditHistoryResponse)
@@ -56,6 +75,7 @@ def get_user_audit(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> AuditHistoryResponse:
     """Paginated authentication history for one user, newest first."""
     rows = audit_crud.get_history_for_user(db, user_id, limit=limit, offset=offset)
@@ -65,7 +85,7 @@ def get_user_audit(
         total=total,
         limit=limit,
         offset=offset,
-        entries=[_to_entry(row) for row in rows],
+        entries=[_to_entry(row, settings) for row in rows],
     )
 
 

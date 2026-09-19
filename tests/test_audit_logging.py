@@ -378,13 +378,14 @@ def test_revoked_template_invalidates_the_old_key_version_and_logs(client):
         data={"user_id": "SCN-REVOKE", "modality": "fingerprint", "application_id": APPLICATION_ID},
         files={"image": ("fp.png", fingerprint_bytes, "image/png")},
     )
+    # Revocation is set-level and needs biometric authorization against the ACTIVE set.
     revoke_response = client.post(
         "/revoke-template",
-        data={"user_id": "SCN-REVOKE", "modality": "fingerprint", "application_id": APPLICATION_ID},
-        files={"image": ("fp.png", fingerprint_bytes, "image/png")},
+        data={"user_id": "SCN-REVOKE", "application_id": APPLICATION_ID},
+        files={"fingerprint_image": ("fp.png", fingerprint_bytes, "image/png")},
     )
     assert revoke_response.status_code == 200
-    assert revoke_response.json()["new_key_version"] == 2
+    assert revoke_response.json()["new_active_template_set_version"] == 2
 
     response = client.post(
         "/authenticate",

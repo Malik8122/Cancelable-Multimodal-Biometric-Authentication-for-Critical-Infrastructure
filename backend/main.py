@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.api import audit, authenticate, enroll, fusion, metrics, revoke, system, user, verify
+from backend.api import audit, authenticate, buildings, enroll, fusion, metrics, revoke, system, templates, user, verify
 from backend.database.crud import ConcurrentEnrollmentError
 from backend.database.session import init_db
 from backend.security_validation import SecurityValidationError
@@ -105,7 +105,9 @@ app.include_router(authenticate.router, tags=["authentication"])
 app.include_router(fusion.router, tags=["authentication"])
 app.include_router(verify.router, tags=["verification"])
 app.include_router(revoke.router, tags=["revocation"])
+app.include_router(templates.router, tags=["templates"])
 app.include_router(user.router, tags=["user"])
+app.include_router(buildings.router, tags=["buildings"])
 app.include_router(metrics.router, tags=["metrics"])
 app.include_router(audit.router, tags=["audit"])
 app.include_router(system.router, tags=["system"])

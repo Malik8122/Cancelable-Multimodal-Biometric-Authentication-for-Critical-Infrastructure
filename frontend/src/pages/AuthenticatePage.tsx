@@ -8,11 +8,12 @@ import { FaceCapture } from '../components/capture/FaceCapture'
 import { FingerprintCapture } from '../components/capture/FingerprintCapture'
 import { VoiceCapture } from '../components/capture/VoiceCapture'
 import { ClearanceBadge } from '../components/biometric/ClearanceBadge'
-import { ModalityChip } from '../components/biometric/ModalityChip'
-import { getBuilding } from '../config/buildings'
+import { EnrollmentStatusPill } from '../components/biometric/EnrollmentStatusPill'
+import { APPLICATION_ID } from '../config/app'
+import { FACTORS, MODALITY_LABEL } from '../config/buildings'
+import { useBuildings } from '../context/BuildingsContext'
 import { useSession } from '../context/SessionContext'
-
-const APPLICATION_ID = 'ncisn-security-network'
+import { useEnrollmentProfile } from '../hooks/useEnrollmentProfile'
 
 type Phase = 'select' | 'capture' | 'processing' | 'error'
 
@@ -21,35 +22,36 @@ interface Captured {
   filename: string
 }
 
-const MODALITY_META: Record<'face' | 'fingerprint' | 'voice', { label: string; icon: typeof ScanFace }> = {
-  face: { label: 'Face', icon: ScanFace },
-  fingerprint: { label: 'Fingerprint', icon: Fingerprint },
-  voice: { label: 'Voice', icon: Mic },
-}
+const ICON: Partial<Record<Modality, typeof ScanFace>> = { face: ScanFace, fingerprint: Fingerprint, voice: Mic }
 
 function buildProcessingSteps(modalities: Modality[]) {
-  const preprocessing = modalities.map((m) => ({
-    key: `preprocess-${m}`,
-    label: `Capturing ${m}`,
-    icon: MODALITY_META[m as 'face' | 'fingerprint' | 'voice'].icon,
+  const captured = modalities.map((m) => ({
+    key: `captured-${m}`,
+    label: `${MODALITY_LABEL[m]} captured`,
+    icon: ICON[m] ?? ScanFace,
   }))
   return [
-    ...preprocessing,
+    ...captured,
     { key: 'embed', label: 'Generating embeddings', icon: Sparkles },
-    { key: 'biohash', label: 'Applying HKDF and BioHash', icon: Lock },
-    { key: 'match', label: 'Matching stored template', icon: ShieldQuestion },
-    { key: 'fusion', label: 'Fusion evaluation', icon: Layers },
-    { key: 'decision', label: 'Security decision', icon: Check },
+    { key: 'biohash', label: 'Applying HKDF and BioHash to the active template set', icon: Lock },
+    { key: 'match', label: 'Template Matching', icon: ShieldQuestion },
+    { key: 'fusion', label: 'Fusion Engine', icon: Layers },
+    { key: 'decision', label: 'Access Decision', icon: Check },
   ]
 }
 
+// The USER chooses which enrolled factors to present in this session; the building is only the context. The backend
+// authenticates and fuses exactly the factors submitted. A factor that is not enrolled cannot be selected (and if one
+// is submitted anyway the backend answers ENROLLMENT_REQUIRED, which is shown as its own screen).
 export function AuthenticatePage() {
   const { buildingId } = useParams<{ buildingId: string }>()
   const navigate = useNavigate()
   const { userId, recordAttempt } = useSession()
+  const { getBuilding, status: buildingsStatus } = useBuildings()
   const building = buildingId ? getBuilding(buildingId) : undefined
+  const { enrolled, statuses, loading: profileLoading } = useEnrollmentProfile(userId)
 
-  const [selected, setSelected] = useState<Modality[]>(building?.requiredModalities ?? [])
+  const [selected, setSelected] = useState<Modality[]>([])
   const [phase, setPhase] = useState<Phase>('select')
   const [captured, setCaptured] = useState<Partial<Record<Modality, Captured>>>({})
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -62,20 +64,14 @@ export function AuthenticatePage() {
 
   const steps = useMemo(() => buildProcessingSteps(selected), [selected])
 
-  // Abort an in-flight authentication request if the page is left before it
-  // settles - the request-scoped timers in handleSubmit are cleared in both
-  // its try/catch branches already, but a mid-flight unmount is a third way
-  // out that neither branch covers.
   useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort()
-    }
+    return () => abortControllerRef.current?.abort()
   }, [])
 
   if (!building) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-16 text-center">
-        <p className="text-muted-foreground">Unknown facility.</p>
+        <p className="text-muted-foreground">{buildingsStatus === 'loading' ? 'Loading facility...' : 'Unknown facility.'}</p>
         <Link to="/" className="mt-4 inline-block text-sm text-primary hover:underline">
           Return to the campus
         </Link>
@@ -86,10 +82,6 @@ export function AuthenticatePage() {
   const toggle = (modality: Modality) => {
     const isDeselecting = selected.includes(modality)
     setSelected((prev) => (isDeselecting ? prev.filter((m) => m !== modality) : [...prev, modality]))
-    // Deselecting a modality that was already captured must not leave its
-    // sample behind - handleSubmit only reads `captured[modality]` for
-    // whichever modalities end up in `selected`, but stale captured data
-    // for a since-deselected modality has no reason to be kept around.
     if (isDeselecting) {
       setCaptured((prev) => {
         if (!(modality in prev)) return prev
@@ -100,13 +92,10 @@ export function AuthenticatePage() {
     }
   }
 
-  const allCaptured = selected.every((m) => captured[m])
-
+  const allCaptured = selected.length > 0 && selected.every((m) => captured[m])
   const handleCapture = (modality: Modality) => (blob: Blob, filename: string) => {
     setCaptured((prev) => ({ ...prev, [modality]: { blob, filename } }))
   }
-
-  const backToSelection = () => setPhase('select')
 
   const startTimer = () => {
     startedAtRef.current = performance.now()
@@ -124,27 +113,23 @@ export function AuthenticatePage() {
     setShowSlowNotice(false)
     startTimer()
 
-    // Illustrative step cadence for the preprocessing/embedding/biohash/match
-    // stages (the backend does all of this inside one request-response - we
-    // don't get granular server-sent progress) - the real network call runs
-    // concurrently, and the final "decision generated" step only resolves
-    // once the real response actually arrives (see below). The elapsed timer
-    // above is real, measured client-side; there is no fake progress bar.
+    // Illustrative step cadence: the backend does all of this inside one request-response. The real decision only
+    // resolves the last step when the response arrives. The elapsed timer is real, measured client-side.
     const illustrativeSteps = steps.length - 1
-    const stepInterval = window.setInterval(() => {
-      setActiveStep((s) => (s < illustrativeSteps ? s + 1 : s))
-    }, 420)
+    const stepInterval = window.setInterval(() => setActiveStep((s) => (s < illustrativeSteps ? s + 1 : s)), 420)
 
-    // A real face+voice /authenticate/fusion request can legitimately take
-    // 50+ seconds on the free-tier backend (face and voice are processed
-    // sequentially, and either model may need to lazily load) - the notice
-    // at 15s is purely informational (never implies failure), and the abort
-    // at 90s is a generous ceiling for a genuinely hung request only; it must
-    // never fire on a real, still-progressing one.
+    // A multi-modality request can legitimately take 50+ seconds on a cold free-tier backend; the notice at 15s is
+    // informational only and the abort at 90s is a ceiling for a genuinely hung request.
     const controller = new AbortController()
     abortControllerRef.current = controller
     const slowNoticeTimeoutId = window.setTimeout(() => setShowSlowNotice(true), 15_000)
     const abortTimeoutId = window.setTimeout(() => controller.abort(), 90_000)
+    const clearTimers = () => {
+      window.clearInterval(stepInterval)
+      window.clearTimeout(slowNoticeTimeoutId)
+      window.clearTimeout(abortTimeoutId)
+      stopTimer()
+    }
 
     try {
       const samples = selected.map((modality) => ({
@@ -152,35 +137,32 @@ export function AuthenticatePage() {
         sample: captured[modality]!.blob,
         filename: captured[modality]!.filename,
       }))
+      // The backend authenticates and fuses exactly these modalities.
       const result = await authenticateFusion(userId, APPLICATION_ID, samples, {
         buildingId: building.id,
         signal: controller.signal,
       })
-      window.clearInterval(stepInterval)
-      window.clearTimeout(slowNoticeTimeoutId)
-      window.clearTimeout(abortTimeoutId)
-      setActiveStep(steps.length)
-      stopTimer()
-      const finalLatency = Math.round(performance.now() - startedAtRef.current)
+      clearTimers()
 
+      if (result.status === 'ENROLLMENT_REQUIRED') {
+        // A submitted factor is not enrolled: nothing was verified - straight to the Enrollment Required screen.
+        navigate(`/building/${building.id}/result`, { state: { result } })
+        return
+      }
+
+      setActiveStep(steps.length)
+      const finalLatency = Math.round(performance.now() - startedAtRef.current)
       recordAttempt({
         buildingId: building.id,
         modalitiesUsed: result.modalities_used,
-        fusedScore: result.fused_score,
+        fusionSimilarity: result.fusion_similarity,
         fusionThreshold: result.fusion_threshold,
         authenticated: result.authenticated,
         latencyMs: finalLatency,
-        perModality: result.results,
       })
-
-      window.setTimeout(() => {
-        navigate(`/building/${building.id}/result`, { state: { result, latencyMs: finalLatency } })
-      }, 500)
+      window.setTimeout(() => navigate(`/building/${building.id}/result`, { state: { result } }), 500)
     } catch (error) {
-      window.clearInterval(stepInterval)
-      window.clearTimeout(slowNoticeTimeoutId)
-      window.clearTimeout(abortTimeoutId)
-      stopTimer()
+      clearTimers()
       setPhase('error')
       const timedOut = error instanceof DOMException && error.name === 'AbortError'
       setErrorMessage(
@@ -206,11 +188,42 @@ export function AuthenticatePage() {
       <AnimatePresence mode="wait">
         {phase === 'select' && (
           <motion.div key="select" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mx-auto max-w-xl">
-            <p className="mb-4 text-center text-sm text-muted-foreground">Select your authentication factors</p>
-            <div className="mb-8 grid grid-cols-3 gap-3">
-              {(Object.keys(MODALITY_META) as Array<keyof typeof MODALITY_META>).map((modality) => (
-                <ModalityChip key={modality} modality={modality} selected={selected.includes(modality)} onToggle={() => toggle(modality)} />
-              ))}
+            <p className="mb-1.5 mt-2 text-center text-sm text-foreground">Select biometric factors for this authentication session.</p>
+            <p className="mb-5 text-center text-xs text-muted-foreground">Choose any of the factors you have registered.</p>
+            <div className="mb-6 grid grid-cols-3 gap-3">
+              {FACTORS.map((modality) => {
+                const Icon = ICON[modality]!
+                const isEnrolled = !!enrolled?.[modality]
+                const isSelected = selected.includes(modality)
+                return (
+                  <div key={modality} className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={!isEnrolled}
+                      aria-pressed={isSelected}
+                      onClick={() => toggle(modality)}
+                      className={`flex flex-col items-center gap-2.5 rounded-xl border px-4 py-6 transition-colors ${
+                        isSelected
+                          ? 'border-primary/60 bg-primary/10 text-primary'
+                          : isEnrolled
+                            ? 'border-border bg-card/60 text-muted-foreground hover:border-white/20'
+                            : 'cursor-not-allowed border-dashed border-border bg-card/30 text-muted-foreground/50'
+                      }`}
+                    >
+                      <Icon className="h-6 w-6" strokeWidth={1.5} />
+                      <span className="text-sm font-medium">{MODALITY_LABEL[modality]}</span>
+                    </button>
+                    <div className="flex flex-col items-center gap-1">
+                      {profileLoading ? <span className="text-[11px] text-muted-foreground">...</span> : <EnrollmentStatusPill status={statuses[modality]} />}
+                      {!isEnrolled && !profileLoading && (
+                        <Link to={`/building/${building.id}/register?focus=${modality}`} className="text-[11px] text-primary hover:underline">
+                          Enroll {MODALITY_LABEL[modality].toLowerCase()}
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             <button
               disabled={selected.length === 0}
@@ -225,13 +238,13 @@ export function AuthenticatePage() {
         {phase === 'capture' && (
           <motion.div key="capture" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <button
-              onClick={backToSelection}
+              onClick={() => setPhase('select')}
               className="mb-4 flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
-              Change Selection
+              Change Factors
             </button>
-            <div className="mb-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className={`mb-4 grid grid-cols-1 gap-4 ${selected.length > 1 ? 'md:grid-cols-2' : 'mx-auto max-w-md'} ${selected.length === 3 ? 'lg:grid-cols-3' : ''}`}>
               {selected.includes('face') && <FaceCapture mode="verify" onCapture={handleCapture('face')} />}
               {selected.includes('fingerprint') && <FingerprintCapture mode="verify" onCapture={handleCapture('fingerprint')} />}
               {selected.includes('voice') && <VoiceCapture mode="verify" onCapture={handleCapture('voice')} />}
@@ -253,16 +266,24 @@ export function AuthenticatePage() {
               <p className="mt-1 text-xs text-muted-foreground">Elapsed time</p>
               <AnimatePresence>
                 {showSlowNotice && (
-                  <motion.p
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="mt-3 text-xs text-muted-foreground/80"
-                  >
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-3 text-xs text-muted-foreground/80">
                     Still verifying - this can take longer when the backend has been inactive.
                   </motion.p>
                 )}
               </AnimatePresence>
+            </div>
+            <div className="mb-5 flex flex-wrap justify-center gap-2">
+              {selected.map((m) => {
+                const Icon = ICON[m] ?? ScanFace
+                return (
+                  <span key={m} className="flex items-center gap-1.5 rounded-full border border-success/25 bg-success/5 px-3 py-1 text-xs font-medium text-success">
+                    <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    {MODALITY_LABEL[m]}
+                    <Check className="h-3 w-3" strokeWidth={2} />
+                    <span className="text-success/80">Captured</span>
+                  </span>
+                )
+              })}
             </div>
             <div className="space-y-2.5">
               {steps.map((s, i) => {
@@ -286,9 +307,7 @@ export function AuthenticatePage() {
                     ) : (
                       <s.icon className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
                     )}
-                    <span className={`text-sm ${done ? 'text-success' : active ? 'text-foreground' : 'text-muted-foreground'}`}>
-                      {s.label}
-                    </span>
+                    <span className={`text-sm ${done ? 'text-success' : active ? 'text-foreground' : 'text-muted-foreground'}`}>{s.label}</span>
                   </motion.div>
                 )
               })}

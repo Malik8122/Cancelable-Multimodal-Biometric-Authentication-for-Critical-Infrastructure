@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, Building2, CheckCircle2, Clock, Fingerprint, M
 import { useEffect, useMemo, useState } from 'react'
 import { getSystemAuditHistory } from '../api/client'
 import type { AuditLogEntry, Modality } from '../api/types'
-import { getBuilding } from '../config/buildings'
+import { useBuildings } from '../context/BuildingsContext'
 import { useCountUp } from '../hooks/useCountUp'
 import { GlowingEffect } from '../components/ui/glowing-effect'
 
@@ -31,6 +31,7 @@ function StatWidget({ icon: Icon, label, value, suffix = '' }: { icon: typeof Ac
 }
 
 export function AnalyticsPage() {
+  const { getBuilding } = useBuildings()
   const [entries, setEntries] = useState<AuditLogEntry[] | null>(null)
   const [error, setError] = useState(false)
 
@@ -46,8 +47,11 @@ export function AnalyticsPage() {
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
     const today = entries.filter((e) => new Date(e.timestamp) >= todayStart)
-    const successCount = entries.filter((e) => e.authenticated).length
-    const failedCount = entries.length - successCount
+    // ENROLLMENT_REQUIRED is its own state, never a failed authentication: nothing biometric was evaluated.
+    const evaluated = entries.filter((e) => e.authentication_state !== 'ENROLLMENT_REQUIRED')
+    const successCount = evaluated.filter((e) => e.authentication_state === 'ACCESS_GRANTED').length
+    const failedCount = evaluated.length - successCount
+    const enrollmentRequiredCount = entries.length - evaluated.length
     const avgLatency = entries.length ? Math.round(entries.reduce((sum, e) => sum + e.latency_ms, 0) / entries.length) : 0
 
     const modalityCounts: Partial<Record<Modality, number>> = {}
@@ -68,8 +72,9 @@ export function AnalyticsPage() {
 
     return {
       todayCount: today.length,
-      successRate: entries.length ? Math.round((successCount / entries.length) * 100) : 0,
+      successRate: evaluated.length ? Math.round((successCount / evaluated.length) * 100) : 0,
       failedCount,
+      enrollmentRequiredCount,
       avgLatency,
       mostUsed,
       recentBuildings,
@@ -93,10 +98,11 @@ export function AnalyticsPage() {
 
       {stats && (
         <>
-          <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-5">
             <StatWidget icon={Clock} label="Today's Attempts" value={stats.todayCount} />
             <StatWidget icon={CheckCircle2} label="Success Rate" value={stats.successRate} suffix="%" />
-            <StatWidget icon={AlertTriangle} label="Failed Attempts" value={stats.failedCount} />
+            <StatWidget icon={AlertTriangle} label="Denied Attempts" value={stats.failedCount} />
+            <StatWidget icon={AlertTriangle} label="Enrollment Required" value={stats.enrollmentRequiredCount} />
             <StatWidget icon={Activity} label="Avg Latency" value={stats.avgLatency} suffix="ms" />
           </div>
 
@@ -171,8 +177,20 @@ export function AnalyticsPage() {
                       <td className="px-4 py-2 font-mono">{entry.user_id}</td>
                       <td className="px-4 py-2">{entry.building_id ? (getBuilding(entry.building_id)?.name ?? entry.building_id) : '-'}</td>
                       <td className="px-4 py-2">{entry.modality_list.join(' + ')}</td>
-                      <td className={`px-4 py-2 font-mono ${entry.authenticated ? 'text-success' : 'text-danger'}`}>
-                        {entry.authenticated ? 'GRANTED' : 'DENIED'}
+                      <td
+                        className={`px-4 py-2 font-mono ${
+                          entry.authentication_state === 'ACCESS_GRANTED'
+                            ? 'text-success'
+                            : entry.authentication_state === 'ENROLLMENT_REQUIRED'
+                              ? 'text-warning'
+                              : 'text-danger'
+                        }`}
+                      >
+                        {entry.authentication_state === 'ACCESS_GRANTED'
+                          ? 'GRANTED'
+                          : entry.authentication_state === 'ENROLLMENT_REQUIRED'
+                            ? 'ENROLLMENT REQUIRED'
+                            : 'DENIED'}
                       </td>
                       <td className="px-4 py-2 font-mono">{entry.latency_ms}ms</td>
                     </motion.tr>

@@ -1,6 +1,6 @@
 import { motion } from 'motion/react'
 import { Mic, RotateCcw, Square, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
 import { useWavRecorder } from '../../hooks/useWavRecorder'
 
@@ -8,15 +8,22 @@ interface Props {
   mode: 'register' | 'verify'
   onCapture: (blob: Blob, filename: string) => void
   disabled?: boolean
+  /** Card heading override, e.g. "Recording 1 of 2". */
+  title?: string
+  /** A recording shorter than this is discarded; one reaching `maxSeconds` stops by itself. */
+  minSeconds?: number
+  maxSeconds?: number
 }
 
 const BAR_COUNT = 28
-const ENROLLMENT_PHRASE = 'My voice is my secure biometric identity.'
+export const VOICE_PHRASE = 'Security authentication for government access.'
 
-export function VoiceCapture({ mode, onCapture, disabled }: Props) {
+export function VoiceCapture({ mode, onCapture, disabled, title, minSeconds = 4, maxSeconds = 5 }: Props) {
   const { state, error, start, stop } = useWavRecorder()
   const [seconds, setSeconds] = useState(0)
   const [captured, setCaptured] = useState(false)
+  const [tooShort, setTooShort] = useState(false)
+  const secondsRef = useRef(0)
   const reducedMotion = useReducedMotion()
   const timerRef = useRef<number | null>(null)
 
@@ -24,9 +31,14 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
 
   const handleStart = async () => {
     setSeconds(0)
+    secondsRef.current = 0
     setCaptured(false)
+    setTooShort(false)
     await start()
-    timerRef.current = window.setInterval(() => setSeconds((s) => s + 1), 1000)
+    timerRef.current = window.setInterval(() => {
+      secondsRef.current += 1
+      setSeconds((s) => s + 1)
+    }, 1000)
   }
 
   const handleStop = async () => {
@@ -35,11 +47,21 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
       timerRef.current = null
     }
     const blob = await stop()
-    if (blob) {
-      onCapture(blob, 'voice.wav')
-      setCaptured(true)
+    if (!blob) return
+    if (secondsRef.current < minSeconds) {
+      setTooShort(true) // too short to be a usable voice sample: discard it
+      return
     }
+    onCapture(blob, 'voice.wav')
+    setCaptured(true)
   }
+
+  // Stop by itself at the maximum duration so every recording is 4-5 seconds.
+  const stopRef = useRef(handleStop)
+  stopRef.current = handleStop
+  useEffect(() => {
+    if (isRecording && seconds >= maxSeconds) void stopRef.current()
+  }, [isRecording, seconds, maxSeconds])
 
   const handleFile = (file: File) => {
     onCapture(file, file.name)
@@ -53,7 +75,7 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
       <div className="mb-4 flex items-center justify-between text-foreground">
         <div className="flex items-center gap-2.5">
           <Mic className="h-4.5 w-4.5 text-primary" strokeWidth={1.5} />
-          <span className="text-sm font-medium">{mode === 'register' ? 'Voice Capture' : 'Verify Voice'}</span>
+          <span className="text-sm font-medium">{title ?? (mode === 'register' ? 'Voice Capture' : 'Verify Voice')}</span>
         </div>
         {isRecording && (
           <motion.span
@@ -69,7 +91,7 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
 
       <div className="mb-3 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2">
         <p className="text-[11px] text-muted-foreground">Speak this phrase</p>
-        <p className="text-sm text-foreground italic">&ldquo;{ENROLLMENT_PHRASE}&rdquo;</p>
+        <p className="text-sm text-foreground italic">&ldquo;{VOICE_PHRASE}&rdquo;</p>
       </div>
 
       <motion.div
@@ -91,9 +113,14 @@ export function VoiceCapture({ mode, onCapture, disabled }: Props) {
       </motion.div>
 
       {error && <p className="mb-3 text-xs text-danger">{error}</p>}
+      {tooShort && (
+        <p className="mb-3 text-xs text-danger">
+          That recording was too short. Please record for at least {minSeconds} seconds.
+        </p>
+      )}
 
       <p className="mb-5 text-[13px] leading-relaxed text-muted-foreground">
-        Speak naturally in a quiet room. Record for approximately 4 seconds at a normal speaking pace.
+        Speak naturally in a quiet room. Recording lasts 4-5 seconds and stops automatically at 5.
       </p>
 
       <div className="flex gap-2.5">

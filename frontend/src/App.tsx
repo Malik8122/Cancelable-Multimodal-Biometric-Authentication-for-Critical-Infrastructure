@@ -10,6 +10,7 @@ import { CheckpointPage } from './pages/CheckpointPage'
 import { LandingPage } from './pages/LandingPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ResultPage } from './pages/ResultPage'
+import { TemplateManagementPage } from './pages/TemplateManagementPage'
 import { TemplateProtectionPage } from './pages/TemplateProtectionPage'
 import { TestingPage } from './pages/TestingPage'
 
@@ -33,6 +34,7 @@ function App() {
             <Route path="/building/:buildingId/result" element={<PageTransition><ResultPage /></PageTransition>} />
             <Route path="/testing" element={<PageTransition><TestingPage /></PageTransition>} />
             <Route path="/analytics" element={<PageTransition><AnalyticsPage /></PageTransition>} />
+            <Route path="/templates" element={<PageTransition><TemplateManagementPage /></PageTransition>} />
             <Route path="/template-protection" element={<PageTransition><TemplateProtectionPage /></PageTransition>} />
           </Routes>
         </AnimatePresence>

@@ -59,13 +59,13 @@ def _calibrated_fields(modality: str) -> dict[str, float]:
     report = load_threshold_report(modality, results_dir=_RESULTS_DIR)
     if report is None:
         return {}
-    return {
-        "calibrated_threshold": float(report["threshold"]),
-        "calibrated_far": float(report["far"]),
-        "calibrated_frr": float(report["frr"]),
-        "calibrated_eer": float(report["eer"]),
-        "calibrated_auc": float(report["auc"]),
-    }
+    # A threshold set by an operator (see evaluation/results/face_threshold.json) has no measured error rates; report only
+    # the fields that were actually measured rather than inventing numbers for the rest.
+    fields = {"calibrated_threshold": float(report["threshold"])}
+    for source, target in (("far", "calibrated_far"), ("frr", "calibrated_frr"), ("eer", "calibrated_eer"), ("auc", "calibrated_auc")):
+        if report.get(source) is not None:
+            fields[target] = float(report[source])
+    return fields
 
 
 @router.get("/metrics/{modality}", response_model=ModalityMetricsResponse)

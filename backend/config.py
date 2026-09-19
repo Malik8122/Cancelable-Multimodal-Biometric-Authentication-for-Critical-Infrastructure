@@ -91,6 +91,22 @@ class Settings(BaseSettings):
     #: tradeoff, not a bug; re-measured per-modality rather than assumed.
     template_bits: int = 256
 
+    #: Multi-template architecture (docs/MULTI_TEMPLATE_ARCHITECTURE.md):
+    #: how many independent cancelable templates one enrollment capture
+    #: produces per modality (T1..TN, each under its own HKDF key_version).
+    #: T1 starts ACTIVE, the rest STANDBY. Env: TEMPLATE_POOL_SIZE.
+    template_pool_size: int = Field(default=4, ge=1)
+
+    #: When False (the default, and what production must use) no public
+    #: response carries per-modality similarity/distance/threshold values -
+    #: only the single fused similarity leaves the backend. The values are
+    #: always still computed and written to the audit log. Env: DEBUG_SCORES.
+    debug_scores: bool = False
+
+    #: JSON file of building security policies (backend/buildings.py). Unset =
+    #: the repository's `config/buildings.json`. Env: BUILDINGS_CONFIG_PATH.
+    buildings_config_path: str | None = None
+
     #: Upload validation (spec: "reject oversized uploads", "validate
     #: uploaded file types").
     max_upload_size_bytes: int = 5_000_000

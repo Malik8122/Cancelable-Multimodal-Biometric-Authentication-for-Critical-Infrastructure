@@ -1,57 +1,34 @@
-import type { Modality } from '../api/types'
+import type { BuildingInfo, Modality } from '../api/types'
 
+// A building is authentication CONTEXT only (id, name, clearance level, description) and defines no biometric policy.
+// The user decides which modalities to enroll and which to present in a session. The list itself comes from the
+// backend (config/buildings.json via GET /buildings); this module adapts it and holds pure display helpers.
 export interface Building {
   id: string
   name: string
   clearanceLevel: 'III' | 'IV' | 'V'
   description: string
-  requiredModalities: Modality[]
 }
 
-// Demo content only - no real facilities, no real access-control claims.
-// `requiredModalities` decides which factors are pre-selected on the
-// authentication portal for that building; the backend enforces nothing
-// building-specific (it has no concept of "buildings" at all). Registration
-// always captures all three modalities, independent of building.
-export const BUILDINGS: Building[] = [
-  {
-    id: 'national-data-centre',
-    name: 'National Data Centre',
-    clearanceLevel: 'V',
-    description: 'Primary sovereign data infrastructure.',
-    requiredModalities: ['face', 'fingerprint', 'voice'],
-  },
-  {
-    id: 'defence-intelligence-hq',
-    name: 'Defence Intelligence Headquarters',
-    clearanceLevel: 'IV',
-    description: 'Classified intelligence operations floor.',
-    requiredModalities: ['face', 'fingerprint'],
-  },
-  {
-    id: 'reserve-bank-vault',
-    name: 'Reserve Bank Secure Vault',
-    clearanceLevel: 'V',
-    description: 'National reserve custody vault.',
-    requiredModalities: ['face', 'fingerprint', 'voice'],
-  },
-  {
-    id: 'central-research-laboratory',
-    name: 'Central Research Laboratory',
-    clearanceLevel: 'III',
-    description: 'Restricted research and development wing.',
-    requiredModalities: ['face', 'voice'],
-  },
-]
-
-export function getBuilding(id: string): Building | undefined {
-  return BUILDINGS.find((building) => building.id === id)
+export function toBuilding(info: BuildingInfo): Building {
+  return {
+    id: info.id,
+    name: info.name,
+    clearanceLevel: info.clearance_level as Building['clearanceLevel'],
+    description: info.description,
+  }
 }
 
-export function securityStrength(modalities: Modality[]): 'None' | 'Medium' | 'High' | 'Maximum' {
-  const count = modalities.length
-  if (count === 0) return 'None'
-  if (count === 1) return 'Medium'
-  if (count === 2) return 'High'
-  return 'Maximum'
+export const MODALITY_LABEL: Record<Modality, string> = {
+  face: 'Face',
+  fingerprint: 'Fingerprint',
+  voice: 'Voice',
+  iris: 'Iris',
+}
+
+/** The three biometric factors a user can enroll and present. */
+export const FACTORS: Modality[] = ['face', 'fingerprint', 'voice']
+
+export function joinModalities(modalities: Modality[]): string {
+  return modalities.map((m) => MODALITY_LABEL[m]).join(' + ')
 }

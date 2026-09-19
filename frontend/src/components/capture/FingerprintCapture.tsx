@@ -10,7 +10,7 @@ interface Props {
   disabled?: boolean
 }
 
-const ACCEPTED = { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/bmp': ['.bmp'] }
+const ACCEPTED = { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'] }
 
 // No physical fingerprint scanner exists in a browser context, so this
 // accepts an uploaded scan image (matching how backend/api/enroll.py's
@@ -102,7 +102,7 @@ export function FingerprintCapture({ mode, onCapture, disabled }: Props) {
       </div>
 
       <p className="mb-5 text-[13px] leading-relaxed text-muted-foreground">
-        Upload a clear fingerprint scan, centered in frame, avoiding blurry or rotated images.
+        Upload a clear fingerprint scan, centered in frame, avoiding blurry or rotated images. Recommended: a high-resolution grayscale scan.
       </p>
 
       <div className="flex gap-2.5">
@@ -126,7 +126,7 @@ export function FingerprintCapture({ mode, onCapture, disabled }: Props) {
         )}
       </div>
       <p className="mt-3 text-center text-xs text-muted-foreground/70">
-        Accepted formats: PNG &bull; JPG &bull; JPEG &bull; BMP
+        Supported formats: PNG &bull; JPG &bull; JPEG
       </p>
     </div>
   )

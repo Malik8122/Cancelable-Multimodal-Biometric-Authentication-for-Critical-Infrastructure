@@ -77,3 +77,41 @@ VoxCeleb1-subset dataset note.
   iris-only, fingerprint-only, and all pairs/triples).
 - Final README/docs pass, end-to-end demo script, limitations and ethics
   section finalized.
+
+## Phase 3A / 3A.1 - Template-set architecture (done)
+
+Requested during project review; this is the final architecture.
+See `docs/MULTI_TEMPLATE_ARCHITECTURE.md`.
+
+- A user's credential is a pool of **template sets** (`TEMPLATE_POOL_SIZE`, default 4). Each set holds
+  one cancelable template per enrolled modality (Face V*n* + Fingerprint V*n* + Voice V*n*); Set 1 is
+  ACTIVE, the rest STANDBY, and revocation moves a whole set (all modalities together).
+- Lifecycle (`ACTIVE` / `STANDBY` / `REVOKED`) in the existing `protected_templates` table
+  (`template_set_version`, `template_set_status`, set created/activated/revoked times).
+- Authentication matches the ACTIVE set only, never mixes sets, and returns a single fused
+  similarity; per-modality scores are internal (audit / debug only). The denied result screen shows no
+  similarity.
+- Template-set management (`GET /templates`, revoke, activate, generate) is protected by **biometric
+  authorization** against the ACTIVE set (403 on failure) instead of a login layer; 409 when the set
+  pool is exhausted / full.
+- Runtime set validation, template-set evaluation experiments (diversity / revocation / promotion /
+  exhaustion), migration of previously enrolled users, Template Management and Template Protection pages.
+- Still open: a real login/authorization layer, calibrated per-modality thresholds, an iris checkpoint,
+  and fingerprint accuracy.
+
+## Phase 3B / V3 - Flexible, user-driven multimodal authentication (done)
+
+- **Buildings are context only** (`id`, `name`, `clearance_level`, `description` in `config/buildings.json`); no building defines
+  required modalities and the loader rejects a config that does. The former building-readiness endpoint is gone.
+- **The user chooses**: any subset of face / fingerprint / voice can be enrolled (status `NOT_REGISTERED` / `REGISTERED` /
+  `UPDATED` / `RETRY_REQUIRED`) and any subset of the enrolled modalities presented. `/authenticate/fusion` (and `/authenticate`,
+  `/verify/*`) authenticate and fuse exactly the submitted modalities; a submitted modality that is not enrolled is
+  `ENROLLMENT_REQUIRED` (HTTP 409, never a denial). The public response adds `authentication_state`, `fusion_distance`,
+  `active_template_set`.
+- **Face one-time five-pose enrollment** (Front / Left / Right / Slight Up / Slight Down): per pose MTCNN + alignment + a 512-d embedding, only blurry or
+  faceless poses rejected, the valid embeddings averaged into a **centroid** and discarded, T1-T4 generated from the centroid alone. Authentication stays a
+  single capture.
+- **Voice** recorded twice; the ECAPA embedding cosine grades them Excellent / Good (enrolled), Fair (`LOW_QUALITY_WARNING`, the user
+  continues or re-records) or Poor (`ENROLLMENT_INCONSISTENT`, nothing stored).
+- Template pool unchanged (T1 ACTIVE, T2-T4 STANDBY per modality; revocation promotes the next set), now with a Face / Fingerprint / Voice matrix.
+- Still open: a real login layer, calibrated per-modality thresholds, an iris checkpoint, fingerprint accuracy.

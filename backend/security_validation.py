@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from backend.config import Settings
-from backend.database.models import ProtectedTemplate
+from backend.database.models import STATUS_ACTIVE, STATUS_REVOKED, STATUS_STANDBY, TEMPLATE_STATUSES, ProtectedTemplate
 from template_protection.biohash import TEMPLATE_FORMAT_VERSION
 from template_protection.hkdf_keys import KeyMaterial, SEED_LENGTH_BYTES
 
@@ -75,7 +75,7 @@ def validate_stored_template(stored: ProtectedTemplate) -> bool:
     positive key_version, and a protected_template blob whose packed byte
     length is consistent with its own declared `output_bits` (see
     template_protection/utils.py::pack_bits - `ceil(output_bits / 8)` bytes)."""
-    if not stored.is_active:
+    if not stored.is_active or stored.template_status != STATUS_ACTIVE:
         return False
     if stored.template_version != TEMPLATE_FORMAT_VERSION:
         return False
@@ -85,12 +85,71 @@ def validate_stored_template(stored: ProtectedTemplate) -> bool:
     return len(stored.protected_template) == expected_bytes
 
 
+def validate_template_pool(
+    pool: list[ProtectedTemplate], *, stored: ProtectedTemplate, key: KeyMaterial, pool_size: int
+) -> dict[str, bool]:
+    """Template-set invariants for one (user, application).
+
+    `pool` is every row of that context (all sets, all modalities, any
+    status); `stored` is the ACTIVE row being authenticated against. Checks:
+
+    - `exactly_one_active_set`: every `is_active` row belongs to one single
+      set, that set is ACTIVE, `stored` is one of them, each modality has at
+      most one active row, and no ACTIVE-status row sits outside it. This is
+      what guarantees authentication never mixes templates from different sets.
+    - `revoked_never_active`: no REVOKED row - and no row of a REVOKED set - is active.
+    - `standby_unique`: live templates have pairwise distinct bytes, and
+      distinct key versions per modality.
+    - `pool_size_correct`: at most `pool_size` live (ACTIVE + STANDBY) sets.
+    - `set_status_consistent`: every live row's status follows its set's
+      status (ACTIVE set -> ACTIVE rows, STANDBY set -> STANDBY rows).
+    - `key_version_matches_template`: the key derived for this attempt is the
+      stored row's key version, and its set version is valid.
+    """
+    live = [row for row in pool if row.template_status != STATUS_REVOKED]
+    active_rows = [row for row in pool if row.is_active]
+    active_set_versions = {row.template_set_version for row in active_rows}
+    active_status_versions = {row.template_set_version for row in pool if row.template_set_status == STATUS_ACTIVE}
+    live_set_versions = {row.template_set_version for row in pool if row.template_set_status != STATUS_REVOKED}
+    modality_counts: dict[str, int] = {}
+    for row in active_rows:
+        modality_counts[row.modality] = modality_counts.get(row.modality, 0) + 1
+
+    return {
+        "exactly_one_active_set": (
+            len(active_set_versions) == 1
+            and active_set_versions == active_status_versions
+            and stored.template_set_version in active_set_versions
+            and stored.template_id in {row.template_id for row in active_rows}
+            and all(count == 1 for count in modality_counts.values())
+            and all(row.template_status in TEMPLATE_STATUSES for row in pool)
+            and all((row.template_status == STATUS_ACTIVE) == bool(row.is_active) for row in pool)
+        ),
+        "revoked_never_active": not any(
+            row.is_active and (row.template_status == STATUS_REVOKED or row.template_set_status == STATUS_REVOKED)
+            for row in pool
+        ),
+        "standby_unique": (
+            len({bytes(row.protected_template) for row in live}) == len(live)
+            and len({(row.modality, row.key_version) for row in live}) == len(live)
+        ),
+        "pool_size_correct": len(live_set_versions) <= max(pool_size, 1),
+        "set_status_consistent": all(
+            row.template_set_status == STATUS_REVOKED
+            or row.template_status == row.template_set_status
+            for row in live
+        ),
+        "key_version_matches_template": key.key_version == stored.key_version and (stored.template_set_version or 0) >= 1,
+    }
+
+
 def validate_authentication(
     *,
     settings: Settings,
     stored: ProtectedTemplate,
     key: KeyMaterial,
     candidate_template_bits: np.ndarray,
+    pool: list[ProtectedTemplate] | None = None,
 ) -> SecurityValidationReport:
     """Run every check for one authentication attempt against `stored`.
 
@@ -104,6 +163,8 @@ def validate_authentication(
         "biohash_template_valid": validate_protected_template_bits(candidate_template_bits, stored.output_bits),
         "stored_template_valid": validate_stored_template(stored),
     }
+    if pool is not None:
+        checks.update(validate_template_pool(pool, stored=stored, key=key, pool_size=settings.template_pool_size))
     return SecurityValidationReport(checks=checks)
 
 

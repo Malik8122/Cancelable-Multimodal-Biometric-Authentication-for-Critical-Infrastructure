@@ -7,53 +7,172 @@ export interface EnrollResponse {
   success: boolean
   user_id: string
   modality: Modality
+  /** How many template sets this modality's templates were written into. */
+  templates_created: number
+  active_template_set_version: number
+  standby_template_set_versions: number[]
   template_version: number
   key_version: number
   template_id: string
+  /** Face five-pose enrollment: how many poses were valid (the centroid was averaged over those) and each pose's verdict. */
+  poses_valid?: number
+  pose_results?: PoseResult[]
+  /** Voice with two recordings: EXCELLENT / GOOD, or FAIR when the user chose to continue. */
+  recording_quality?: RecordingQuality
 }
 
-export interface AuthenticateResponse {
-  user_id: string
+// Face enrollment is one guided five-pose capture. Per pose the backend runs MTCNN + alignment + one embedding and rejects
+// ONLY a blurry or faceless capture; the valid embeddings are averaged into a centroid and the templates come from it alone.
+export type FacePose = 'front' | 'left' | 'right' | 'up' | 'down'
+export type PoseStatus = 'VALID' | 'NO_FACE' | 'BLURRY'
+
+export interface PoseResult {
+  pose: FacePose
+  status: PoseStatus
+}
+
+export interface FacePoseCheckResponse {
+  pose: FacePose
+  status: PoseStatus
+  valid: boolean
+  detail?: string
+}
+
+export type EnrollmentStatus = 'NOT_REGISTERED' | 'REGISTERED' | 'UPDATED' | 'RETRY_REQUIRED'
+
+// Voice enrollment: how consistent the two recordings are (ECAPA embedding cosine similarity, computed by the backend).
+//   EXCELLENT / GOOD  -> enrolled.   FAIR -> LOW_QUALITY_WARNING, nothing stored until the user continues.
+//   POOR              -> ENROLLMENT_INCONSISTENT, rejected, nothing stored.
+export type RecordingQuality = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR'
+
+// HTTP 409 body of /enroll (voice): usable but lower-quality recordings. Nothing was stored yet.
+export interface LowQualityWarningResponse {
+  status: 'LOW_QUALITY_WARNING'
+  recording_quality: 'FAIR'
+  detail: string
   modality: Modality
-  score: number
-  threshold: number
-  authenticated: boolean
-  distance: number
-  template_version: number
-  key_version: number
 }
 
-export interface ModalityAuthenticationResult {
-  score: number
-  threshold: number
-  authenticated: boolean
-  distance: number
-  template_version: number
-  key_version: number
+// HTTP 422 body of /enroll when the two voice recordings are not consistent: nothing was stored.
+export interface EnrollmentInconsistentResponse {
+  status: 'ENROLLMENT_INCONSISTENT'
+  recording_quality: 'POOR'
+  detail: string
+  modality: Modality
+  enrollment_status: 'RETRY_REQUIRED'
 }
 
 export type FusionPolicy = 'ALL_REQUIRED' | 'AT_LEAST_TWO' | 'WEIGHTED'
 
-export interface FusionAuthenticateResponse {
+// The ONE authentication response (/verify/*, /authenticate, /authenticate/fusion):
+// one decision, one fusion similarity, one template set version. Per-modality
+// similarity / distance / threshold values never reach the frontend - the
+// backend only returns them when it runs with DEBUG_SCORES=true, and this app
+// deliberately has no field for them.
+export type AuthenticationState = 'ACCESS_GRANTED' | 'ACCESS_DENIED' | 'ENROLLMENT_REQUIRED'
+
+export interface AuthenticationDecision {
   user_id: string
-  modalities_used: Modality[]
-  results: Partial<Record<Modality, ModalityAuthenticationResult>>
-  fused_score: number
-  fusion_threshold: number
+  /** ACCESS_GRANTED or ACCESS_DENIED - an evaluation took place. */
+  authentication_state: 'ACCESS_GRANTED' | 'ACCESS_DENIED'
+  /** Same value as authentication_state (backend compatibility field). */
+  status: 'ACCESS_GRANTED' | 'ACCESS_DENIED'
   authenticated: boolean
+  fusion_similarity: number
+  fusion_distance: number
+  fusion_threshold: number
   fusion_policy: FusionPolicy
-  required_modalities: Modality[]
   matched_modalities: Modality[]
-  failed_modalities: Modality[]
+  modalities_used: Modality[]
+  /** The ACTIVE template set that was matched. */
+  active_template_set: number
+  template_set_version: number
+  /** Highest HKDF key version among the modalities' templates in that set. */
+  key_version: number
+  authentication_time_ms: number
+  /** The facility label of the session (context only). */
+  building_id?: string
 }
+
+// HTTP 409 body of /authenticate/fusion: a modality the user SUBMITTED is not enrolled.
+// This is NOT an authentication failure - nothing biometric was evaluated.
+export interface EnrollmentRequiredResponse {
+  status: 'ENROLLMENT_REQUIRED'
+  authentication_state: 'ENROLLMENT_REQUIRED'
+  detail: string
+  user_id: string
+  building_id?: string
+  submitted_modalities: Modality[]
+  enrolled_modalities: Modality[]
+  missing_modalities: Modality[]
+}
+
+/** What the result screen renders: exactly one of the three authentication states. */
+export type AuthenticationOutcome = AuthenticationDecision | EnrollmentRequiredResponse
+
+// --- Buildings (authentication context only) + the user's enrollment profile ---
+export interface BuildingInfo {
+  id: string
+  name: string
+  description: string
+  clearance_level: string
+}
+
+export interface EnrollmentStatusResponse {
+  user_id: string
+  application_id: string
+  modalities: Partial<Record<Modality, boolean>>
+  statuses: Partial<Record<Modality, EnrollmentStatus>>
+}
+
+export type AuthenticateResponse = AuthenticationDecision
+export type FusionAuthenticateResponse = AuthenticationDecision
+
+export type TemplateSetStatus = 'ACTIVE' | 'STANDBY' | 'REVOKED'
 
 export interface RevokeResponse {
   success: boolean
   user_id: string
-  modality: Modality
-  old_key_version: number
-  new_key_version: number
-  template_id: string
+  revoked_template_set_version: number
+  new_active_template_set_version: number
+  remaining_standby_template_sets: number
+}
+
+export interface TemplateSetInfo {
+  template_set_version: number
+  status: TemplateSetStatus
+  modalities: Modality[]
+  key_versions: Partial<Record<Modality, number>>
+  template_group_id: string | null
+  created_at: string | null
+  activated_at: string | null
+  revoked_at: string | null
+  revoked_reason: string | null
+}
+
+export interface TemplateSetPoolResponse {
+  user_id: string
+  application_id: string
+  pool_size: number
+  active_template_set_version: number | null
+  standby_count: number
+  sets: TemplateSetInfo[]
+}
+
+export interface ActivateResponse {
+  success: boolean
+  user_id: string
+  previous_active_template_set_version: number | null
+  new_active_template_set_version: number
+  remaining_standby_template_sets: number
+}
+
+export interface GenerateSetResponse {
+  success: boolean
+  user_id: string
+  new_template_set_version: number
+  standby_template_set_versions: number[]
+  active_template_set_version: number
 }
 
 export interface EnrolledModality {
@@ -107,6 +226,7 @@ export interface SystemHealthResponse {
   fusion_policy: FusionPolicy
   thresholds_loaded: boolean
   audit_logging: boolean
+  template_pool_size: number
 }
 
 export interface AuditLogEntry {
@@ -115,10 +235,12 @@ export interface AuditLogEntry {
   user_id: string
   building_id: string | null
   modality_list: Modality[]
-  similarity_scores: Partial<Record<Modality, number>>
-  thresholds_used: Partial<Record<Modality, number>>
-  fusion_score: number | null
+  fusion_similarity: number | null
   fusion_policy: FusionPolicy | null
+  authentication_state: AuthenticationState
+  submitted_modalities: Modality[] | null
+  enrolled_modalities: Modality[] | null
+  authenticated_modalities: Modality[] | null
   authenticated: boolean
   latency_ms: number
   template_versions: Partial<Record<Modality, number>>
@@ -146,11 +268,14 @@ export interface ApiErrorBody {
 export class ApiError extends Error {
   status: number
   detail: string
+  /** The parsed JSON error body, when there was one (e.g. the ENROLLMENT_REQUIRED 409). */
+  body?: unknown
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, body?: unknown) {
     super(detail)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.body = body
   }
 }

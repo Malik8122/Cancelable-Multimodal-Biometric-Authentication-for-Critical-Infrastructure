@@ -1,0 +1,10 @@
+{
+  "modality": "voice",
+  "threshold": 0.8,
+  "source": "operator-specified",
+  "eer": null,
+  "far": null,
+  "frr": null,
+  "auc": null,
+  "note": "Operator-specified threshold. With the previous fallback of 0.90 (= an embedding cosine of about 0.95 between the enrolled and the live capture) genuine users were denied: real microphone captures of one user scored 0.797, 0.848, 0.879. Not derived from a genuine/impostor calibration run, so no measured FAR/FRR/EER. Delete this file to restore the 0.90 fallback; replace it with the output of scripts/calibrate_protected_thresholds.py once real multi-person data exists."
+}

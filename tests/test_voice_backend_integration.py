@@ -209,11 +209,13 @@ def test_genuine_recapture_at_a_different_realistic_duration_authenticates(clien
     )
     assert verify_response.status_code == 200
     body = verify_response.json()
-    assert body["threshold"] == 0.9, "this test is only meaningful against the original, uncalibrated threshold"
+    # The regression bar is the ORIGINAL 0.9: the genuine recapture must clear it, whatever threshold voice is configured with
+    # (evaluation/results/voice_threshold.json currently sets 0.8), so this stays meaningful and cannot pass by threshold relaxation alone.
+    assert body["score"] >= 0.9, f"genuine recapture scored {body['score']}, below the original 0.9 bar"
     assert body["authenticated"] is True, f"genuine recapture (score={body['score']}, threshold={body['threshold']}) was denied"
 
 
-def test_verify_voice_without_enrollment_returns_not_authenticated(client):
+def test_verify_voice_without_enrollment_returns_enrollment_required(client):
     pytest.importorskip("speechbrain", reason="speechbrain not installed in this environment")
     pytest.importorskip("torchaudio", reason="torchaudio not installed in this environment")
 
@@ -222,8 +224,8 @@ def test_verify_voice_without_enrollment_returns_not_authenticated(client):
         data={"user_id": "never-enrolled", "application_id": APPLICATION_ID},
         files={"image": ("sample.wav", _encode_wav(_tone()), "audio/wav")},
     )
-    assert response.status_code == 200
-    assert response.json()["authenticated"] is False
+    assert response.status_code == 409
+    assert response.json()["status"] == "ENROLLMENT_REQUIRED"
 
 
 def test_enroll_voice_rejects_a_non_audio_content_type(client):

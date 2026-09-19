@@ -23,6 +23,16 @@ class Base(DeclarativeBase):
     pass
 
 
+#: Lifecycle of one protected template (see docs/MULTI_TEMPLATE_ARCHITECTURE.md).
+#: `is_active` is kept as a mirror of `template_status == ACTIVE` so the
+#: partial unique index below (exactly one ACTIVE per context) keeps working
+#: and pre-existing readers of `is_active` stay correct.
+STATUS_ACTIVE = "ACTIVE"
+STATUS_STANDBY = "STANDBY"
+STATUS_REVOKED = "REVOKED"
+TEMPLATE_STATUSES = (STATUS_ACTIVE, STATUS_STANDBY, STATUS_REVOKED)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -84,6 +94,35 @@ class ProtectedTemplate(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
+    #: ACTIVE / STANDBY / REVOKED. Only the ACTIVE row is ever compared
+    #: against during authentication.
+    template_status: Mapped[str] = mapped_column(String, default=STATUS_ACTIVE, index=True)
+    activation_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: Templates created by one enrollment/replenish call share a group id.
+    template_group_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    #: Legacy mirror of `template_set_version` (kept so older readers work).
+    template_index: Mapped[int] = mapped_column(Integer, default=1)
+
+    # --- Template Set (docs/MULTI_TEMPLATE_ARCHITECTURE.md) -----------------
+    # A template SET is one complete multimodal credential: every row with the
+    # same (user_id, application_id, template_set_version) is one modality's
+    # template inside it. Activation / revocation happen per SET, so the
+    # set-level columns below are identical on every row of a set, and the
+    # row-level `template_status` / `is_active` above follow them (a row is
+    # ACTIVE exactly when its set is ACTIVE - except a row that was
+    # individually replaced by re-enrolling one modality, which is REVOKED
+    # while its set stays ACTIVE).
+    #: 1-based, never reused, per (user_id, application_id). This is the
+    #: "template set version" the API and UI show.
+    template_set_version: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    #: ACTIVE / STANDBY / REVOKED - exactly one ACTIVE set per (user, application).
+    template_set_status: Mapped[str] = mapped_column(String, default=STATUS_ACTIVE, index=True)
+    template_set_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    template_set_activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    template_set_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     user: Mapped["User"] = relationship(back_populates="templates")
 
     __table_args__ = (
@@ -99,6 +138,17 @@ class ProtectedTemplate(Base):
             unique=True,
             sqlite_where=text("is_active = 1"),
             postgresql_where=text("is_active = true"),
+        ),
+        # A template set holds at most one live template per modality.
+        Index(
+            "ux_one_live_template_per_set_modality",
+            "user_id",
+            "application_id",
+            "template_set_version",
+            "modality",
+            unique=True,
+            sqlite_where=text("template_status <> 'REVOKED'"),
+            postgresql_where=text("template_status <> 'REVOKED'"),
         ),
     )
 
@@ -140,7 +190,26 @@ class AuditLog(Base):
     thresholds_used: Mapped[dict[str, float]] = mapped_column(JSON)
 
     fusion_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Internal per-modality similarities (also inside `similarity_scores`) as
+    #: first-class columns for metrics/testing; never sent to the production
+    #: frontend. `fusion_similarity` mirrors `fusion_score`.
+    face_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fingerprint_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voice_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fusion_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
     fusion_policy: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: Which template set matched, and its lifecycle status at the time.
+    template_set_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_set_status: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    #: ACCESS_GRANTED / ACCESS_DENIED / ENROLLMENT_REQUIRED (backend/states.py). Enrollment-required
+    #: attempts are recorded here - and NOT as failed authentications - with nothing biometric evaluated.
+    authentication_state: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    #: The modalities the user submitted for this session (evaluated or not), the modalities the user had
+    #: enrolled at the time, and the submitted ones that actually verified.
+    submitted_modalities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    enrolled_modalities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    authenticated_modalities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     authenticated: Mapped[bool] = mapped_column(Boolean)
     latency_ms: Mapped[int] = mapped_column(Integer)
@@ -151,3 +220,20 @@ class AuditLog(Base):
     #: *current* active row per context, not history).
     template_versions: Mapped[dict[str, int]] = mapped_column(JSON)
     key_versions: Mapped[dict[str, int]] = mapped_column(JSON)
+
+
+class EnrollmentEvent(Base):
+    """One enrollment attempt for one modality: ENROLLED, or INCONSISTENT (voice: the two recordings did not match).
+
+    Templates alone cannot say "the last attempt failed" - a rejected enrollment stores nothing - so the outcome is
+    kept here. It is what turns a not-enrolled voice into RETRY_REQUIRED instead of NOT_REGISTERED. Metadata only.
+    """
+
+    __tablename__ = "enrollment_events"
+
+    event_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    application_id: Mapped[str] = mapped_column(String, index=True)
+    modality: Mapped[str] = mapped_column(String, index=True)
+    outcome: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

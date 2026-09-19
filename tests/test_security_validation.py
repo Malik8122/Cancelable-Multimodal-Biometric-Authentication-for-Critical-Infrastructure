@@ -49,6 +49,8 @@ def _stored_template(output_bits: int = 128, **overrides) -> ProtectedTemplate:
         output_bits=output_bits,
         protected_template=pack_bits(bits),
         is_active=True,
+        template_status="ACTIVE",
+        template_index=1,
     )
     defaults.update(overrides)
     return ProtectedTemplate(**defaults)

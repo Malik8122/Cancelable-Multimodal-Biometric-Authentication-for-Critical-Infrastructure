@@ -130,7 +130,7 @@ def test_fusion_two_modalities_fingerprint_and_voice(client):
     assert body["fused_score"] == pytest.approx(expected_fused)
 
 
-def test_fusion_never_enrolled_face_still_returns_a_clean_zero_score(client, random_rgb_image):
+def test_fusion_submitting_a_never_enrolled_face_is_enrollment_required(client, random_rgb_image):
     """Proves the endpoint accepts and routes all three `UploadFile` fields
     together (structural three-modality wiring), with real fingerprint and
     voice inference. Face contributes its documented "not enrolled" outcome
@@ -168,21 +168,33 @@ def test_fusion_never_enrolled_face_still_returns_a_clean_zero_score(client, ran
             "voice_audio": ("sample.wav", voice_bytes, "audio/wav"),
         },
     )
-    assert response.status_code == 200
+    # face was submitted but never enrolled: ENROLLMENT_REQUIRED, and nothing at all is evaluated
+    assert response.status_code == 409
     body = response.json()
-    assert sorted(body["modalities_used"]) == ["face", "fingerprint", "voice"]
-    assert body["results"]["face"]["score"] == 0.0
-    assert body["results"]["face"]["authenticated"] is False
+    assert body["status"] == "ENROLLMENT_REQUIRED" and body["missing_modalities"] == ["face"]
+    assert body["enrolled_modalities"] == ["fingerprint", "voice"]
+
+    # the user simply presents what IS enrolled: fusion runs over exactly those two
+    ok = client.post(
+        "/authenticate/fusion",
+        data={"user_id": "U-FUSION-3", "application_id": APPLICATION_ID},
+        files={
+            "fingerprint_image": ("fp.png", fingerprint_bytes, "image/png"),
+            "voice_audio": ("sample.wav", voice_bytes, "audio/wav"),
+        },
+    )
+    assert ok.status_code == 200
+    body = ok.json()
+    assert sorted(body["modalities_used"]) == ["fingerprint", "voice"]
     assert body["results"]["fingerprint"]["authenticated"] is True
     assert body["results"]["voice"]["authenticated"] is True
-    expected_fused = sum(body["results"][m]["score"] for m in ("face", "fingerprint", "voice")) / 3
+    expected_fused = sum(body["results"][m]["score"] for m in ("fingerprint", "voice")) / 2
     assert body["fused_score"] == pytest.approx(expected_fused)
 
 
-def test_fusion_unenrolled_modality_contributes_a_zero_score_not_an_error(client):
-    """A modality that was never enrolled must still show up in `results`
-    (score=0.0, authenticated=False) and pull the fused score down -
-    never silently dropped."""
+def test_fusion_unenrolled_modality_is_enrollment_required_not_a_zero_score(client):
+    """A submitted modality that was never enrolled is ENROLLMENT_REQUIRED (409): it is not authenticated and not
+    scored - never silently dropped, never fabricated as a zero-score failure."""
     wav_bytes = _encode_wav(_tone())
 
     response = client.post(
@@ -190,9 +202,7 @@ def test_fusion_unenrolled_modality_contributes_a_zero_score_not_an_error(client
         data={"user_id": "never-enrolled", "application_id": APPLICATION_ID},
         files={"voice_audio": ("sample.wav", wav_bytes, "audio/wav")},
     )
-    assert response.status_code == 200
+    assert response.status_code == 409
     body = response.json()
-    assert body["results"]["voice"]["score"] == 0.0
-    assert body["results"]["voice"]["authenticated"] is False
-    assert body["fused_score"] == 0.0
-    assert body["authenticated"] is False
+    assert body["status"] == "ENROLLMENT_REQUIRED" and body["missing_modalities"] == ["voice"]
+    assert "results" not in body and "authenticated" not in body

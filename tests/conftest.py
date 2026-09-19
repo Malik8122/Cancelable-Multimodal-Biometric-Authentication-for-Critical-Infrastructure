@@ -24,6 +24,10 @@ def test_master_secret(monkeypatch):
     Settings() is constructed.
     """
     monkeypatch.setenv("MASTER_SECRET", "unit-test-master-secret-not-for-production")
+    # Per-modality scores are internal-only in production (DEBUG_SCORES unset).
+    # Tests that assert on them opt in here; tests/test_multi_template.py
+    # overrides this to prove the production (scores hidden) behaviour.
+    monkeypatch.setenv("DEBUG_SCORES", "true")
     from backend.config import get_settings
 
     get_settings.cache_clear()

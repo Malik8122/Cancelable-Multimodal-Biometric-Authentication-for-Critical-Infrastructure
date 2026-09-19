@@ -96,4 +96,5 @@ def system_health(db: Session = Depends(get_db), settings: Settings = Depends(ge
         fusion_policy=DEFAULT_FUSION_POLICY.value,
         thresholds_loaded=thresholds_loaded,
         audit_logging=True,
+        template_pool_size=settings.template_pool_size,
     )

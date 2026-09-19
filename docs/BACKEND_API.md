@@ -51,7 +51,11 @@ change to what's described here.
 
 ## `POST /enroll`
 
-Preprocess -> embed -> transform -> store a new protected template.
+Preprocess -> embed **once** -> write that modality's template into each **template
+set** (see `docs/MULTI_TEMPLATE_ARCHITECTURE.md`). A new user gets `TEMPLATE_POOL_SIZE`
+(default 4) sets: Set 1 `ACTIVE`, the rest `STANDBY`. Enroll each modality in turn; every
+live set then holds a template for all of them. A modality enrolled later joins every live
+set; re-enrolling one replaces its templates inside them (key versions are never reused).
 
 **Request** (multipart/form-data):
 
@@ -62,80 +66,214 @@ Preprocess -> embed -> transform -> store a new protected template.
 | `application_id` | string | no | Defaults to `Settings.application_id` |
 | `image` | file | yes | PNG/JPEG/BMP for face/iris/fingerprint, WAV for voice; under `Settings.max_upload_size_bytes` |
 
-**Response** `200 OK`:
+**Response** `200 OK` (never contains template bytes):
 
 ```json
 {
   "success": true,
   "user_id": "U001",
   "modality": "face",
+  "templates_created": 4,
+  "active_template_set_version": 1,
+  "standby_template_set_versions": [2, 3, 4],
   "template_version": 1,
   "key_version": 1,
   "template_id": "1294340e-9a34-4cb9-bbb2-00c9f6259154"
 }
 ```
 
-Re-enrolling the same (user, modality, application) continues the existing
-`key_version` sequence rather than resetting it (`backend/database/crud.py::next_key_version`).
+**Face: one-time five-pose enrollment.** Send `pose_front`, `pose_left`, `pose_right`, `pose_up`, `pose_down` (face only; `image` is then
+not needed). Per pose the backend runs the existing MTCNN detection + alignment and one FaceNet embedding, and rejects **only** a capture with
+no detectable face (`NO_FACE`) or a blurry aligned crop (`BLURRY`). The valid embeddings are averaged and L2-normalized into a **centroid**, the
+temporary embeddings are discarded immediately, and the T1-T4 template sets are generated from the centroid alone through the unchanged
+HKDF + BioHash path - only protected templates are stored. Response: `poses_valid` and `pose_results` (`[{"pose", "status"}]`). At least 3 valid
+poses are needed; fewer -> `422 {"status": "FACE_CAPTURE_REJECTED", "pose_results": [...], "detail": "... Nothing was enrolled ..."}` and nothing
+is stored. A single `image` still enrolls a face from one capture. Authentication is unchanged: one live image, one embedding, compared with the
+ACTIVE template.
+
+`POST /enroll/face/check-pose` (form: `pose`, `image`) returns `{"pose", "status": "VALID" | "NO_FACE" | "BLURRY", "valid", "detail"}` so the UI can
+ask for an immediate retake. It stores nothing.
+
+**Voice: two recordings, graded consistency check.** `confirm_image` (voice only) is the second recording. Before anything is
+stored the backend compares the two by the **cosine similarity of their ECAPA-TDNN embeddings** - not waveforms, not mel
+spectrograms, not BioHash. Speaker embeddings tolerate natural variation (pace, phrasing, mild noise), so only clearly
+mismatched recordings are rejected:
+
+| ECAPA embedding cosine of the two recordings | Band | Result |
+|---|---|---|
+| >= 0.85 | **Excellent** | enrolled |
+| 0.75 - 0.84 | **Good** | enrolled |
+| 0.60 - 0.74 | **Fair** | `409 LOW_QUALITY_WARNING` - nothing stored unless the user continues (`accept_low_quality=true`) or re-records |
+| < 0.60 | **Poor** | `422 ENROLLMENT_INCONSISTENT` - rejected, nothing stored |
+
+Templates are stored only for the first three outcomes (Excellent, Good, and Fair once the user continues), always from the first
+recording and always as the usual T1 ACTIVE + T2-T4 STANDBY pool. A Fair or Poor result stores nothing, so the modality stays as it
+was (a rejected *re-*enrollment keeps the previous enrollment). Responses:
+
+- `200` -> `recording_quality`: `EXCELLENT` \| `GOOD` (or `FAIR` after Continue).
+- `409` -> `{"status": "LOW_QUALITY_WARNING", "recording_quality": "FAIR", "detail": "Your recordings are usable, but quality is lower than recommended."}`.
+  Repeat the same request with `accept_low_quality=true` to continue. A warning is not a failed attempt (status stays `NOT_REGISTERED`).
+- `422` -> `{"status": "ENROLLMENT_INCONSISTENT", "recording_quality": "POOR", "enrollment_status": "RETRY_REQUIRED", "detail": "The two recordings appear to be from different speakers or are too noisy. Nothing was enrolled - please record again."}`;
+  `accept_low_quality` cannot override it.
+
+The raw cosine is returned only with `DEBUG_SCORES=true`; production exposes just the band. This check gates enrollment only - it changes no
+authentication threshold, no fusion logic and no template generation.
+
+`templates_created` is the number of sets this modality was written into.
+`template_version` (BioHash format version) / `key_version` / `template_id` describe this
+modality's template in the ACTIVE set.
 
 ## `POST /authenticate`
 
-Preprocess -> embed -> transform under the *currently active* key -> compare
-against the stored template.
+Preprocess -> embed -> transform under the **ACTIVE set's** key -> compare with the ACTIVE
+set's template (standby and revoked sets are never read; templates of different sets are
+never mixed).
 
-**Request**: same shape as `/enroll` (no `template_version`/`key_version`
-fields - those are server-tracked).
+**Request**: same shape as `/enroll`.
 
-**Response** `200 OK`:
+**Response** `200 OK` - the single public authentication response, shared by
+`/authenticate`, `/verify/*` and `/authenticate/fusion`:
 
 ```json
 {
   "user_id": "U001",
-  "modality": "face",
-  "score": 0.93,
-  "threshold": 0.9,
-  "authenticated": true
+  "status": "ACCESS_GRANTED",
+  "authenticated": true,
+  "fusion_similarity": 0.93,
+  "fusion_threshold": 0.9,
+  "fusion_policy": "ALL_REQUIRED",
+  "matched_modalities": ["face"],
+  "modalities_used": ["face"],
+  "template_set_version": 1,
+  "key_version": 1,
+  "authentication_time_ms": 412
 }
 ```
 
-`score` is a Hamming similarity in `[0, 1]` (1.0 = identical templates - see
-`template_protection/matcher.py`). If nothing is enrolled for this (user,
-modality, application), this returns `200` with `"authenticated": false,
-"score": 0.0` rather than an error - a missing enrollment and a failed match
-are both "not authenticated" from a caller's point of view.
+`fusion_similarity` is a Hamming similarity in `[0, 1]` (for one modality, that modality's
+similarity). `template_set_version` is the ACTIVE set that matched; `key_version` the highest
+HKDF key version among its templates. **Per-modality similarities, per-modality thresholds,
+distances (`fusion_distance` included), `results` and `fused_score` are not returned** unless the
+server runs with `DEBUG_SCORES=true`; they are always written to the audit log. If nothing is
+enrolled this returns `200` with `"authenticated": false, "fusion_similarity": 0.0`.
+
+## `POST /authenticate/fusion`
+
+**The user chooses the factors.** Buildings define no biometric policy; `building_id` is an optional label (recorded in the audit
+log; unknown -> `404`). Submit any non-empty subset of `face_image`, `fingerprint_image`, `voice_audio` (none -> `422`):
+
+1. a submitted modality that is not enrolled -> **`409`** `{"status": "ENROLLMENT_REQUIRED", "authentication_state": ..., "detail": ...,
+   "submitted_modalities": [...], "enrolled_modalities": [...], "missing_modalities": [...]}`. That modality is not authenticated,
+   nothing is decoded or evaluated, and the attempt is audited as `ENROLLMENT_REQUIRED`. **This is not an authentication failure.**
+2. otherwise exactly the submitted modalities are authenticated against the ACTIVE template set and fused: `authentication_state`
+   is `ACCESS_GRANTED` (all verified) or `ACCESS_DENIED`, both `200`.
+
+The same 409 rule applies to `/authenticate` and `/verify/*`.
+
+Fields: `user_id`, optional `application_id`, `building_id`, `fusion_policy`
+(`ALL_REQUIRED` default \| `AT_LEAST_TWO` \| `WEIGHTED`), and the captures. Same response as `/authenticate` (below).
+`AT_LEAST_TWO` requires all three modalities submitted (422 otherwise). `fusion_similarity = mean(s_m)`, `fusion_distance =
+1 - fusion_similarity`, `fusion_threshold = mean(t_m)` over the submitted modalities; under `ALL_REQUIRED` each submitted
+modality must individually pass its own threshold.
 
 ## `POST /verify/face` · `POST /verify/iris` · `POST /verify/fingerprint` · `POST /verify/voice`
 
-Identical to `/authenticate`, with the modality fixed by the URL instead of a
-form field (so the request omits `modality`). Same response shape.
-`/verify/voice`'s `image` field is a WAV file (see the Conventions note
-above).
+Identical to `/authenticate`, with the modality fixed by the URL (the request omits `modality`).
+Same response shape. `/verify/voice`'s `image` field is a WAV file.
 
-## `POST /revoke-template`
+## Template-set management (biometric authorization)
 
-Rotate the key for (user, modality, application) and store the resulting new
-template.
+There is no login. Every mutating template-set call below must carry a **fresh capture of every
+modality in the ACTIVE set** as multipart fields `face_image`, `fingerprint_image`, `voice_audio`,
+`iris_image`. Each capture is authenticated against its ACTIVE-set template; a missing/extra
+modality or any mismatch returns **`403`** (`"Biometric authorization failed."`) and changes
+nothing. Attempts are audit-logged. Nothing here returns template bytes.
 
-**Request**: same shape as `/enroll`. **A new image is required** - a
-protected template cannot be "re-keyed" without the underlying embedding (see
-`docs/TEMPLATE_PROTECTION.md`'s revocation workflow); there is no
-image-less way to call this endpoint.
+### `POST /revoke-template`
 
-**Response** `200 OK`:
+Fields: `user_id`, optional `application_id`, `reason`, plus the authorization captures.
+Revokes the whole ACTIVE set and activates the oldest STANDBY set for **every modality at once**.
 
 ```json
 {
   "success": true,
   "user_id": "U001",
-  "modality": "face",
-  "old_key_version": 1,
-  "new_key_version": 2,
-  "template_id": "6be58a97-4edf-4391-a244-aef0bfa26f79"
+  "revoked_template_set_version": 1,
+  "new_active_template_set_version": 2,
+  "remaining_standby_template_sets": 2
 }
 ```
 
-The previous template row is deactivated (not deleted) and will no longer be
-returned by `/user/{id}` or matched against by `/authenticate`.
+`403` authorization failed; `404` nothing enrolled; **`409` `"Template set pool exhausted.
+Re-enrollment required."`** when no STANDBY set remains (nothing changes).
+
+### `GET /templates/{user_id}`
+
+Optional query `application_id`. Read-only (no authorization). The template set pool:
+
+```json
+{
+  "user_id": "U001", "application_id": "capstone-demo", "pool_size": 4,
+  "active_template_set_version": 2, "standby_count": 2,
+  "sets": [
+    {"template_set_version": 1, "status": "REVOKED", "modalities": ["face", "fingerprint", "voice"],
+     "key_versions": {"face": 1, "fingerprint": 1, "voice": 1}, "template_group_id": "...",
+     "created_at": "...", "activated_at": "...", "revoked_at": "...", "revoked_reason": "revoked by user"},
+    {"template_set_version": 2, "status": "ACTIVE", "...": "..."}
+  ]
+}
+```
+
+`404` for an unknown user or one with no sets.
+
+### `POST /templates/{user_id}/activate/{version}`
+
+Fields: optional `application_id` + the authorization captures. Promotes STANDBY set `version`
+to ACTIVE; the previous ACTIVE set becomes REVOKED (`superseded by manual activation`).
+`403` / `404` (not a STANDBY set). Returns `{success, user_id, previous_active_template_set_version,
+new_active_template_set_version, remaining_standby_template_sets}`.
+
+### `POST /templates/{user_id}/generate`
+
+Fields: optional `application_id` + the authorization captures. Adds **one** complete new STANDBY
+set (every modality of the ACTIVE set) built from those same captures, under fresh key versions.
+`409` when the pool already holds `TEMPLATE_POOL_SIZE` live sets; `403` / `404` as above. Returns
+`{success, user_id, new_template_set_version, standby_template_set_versions,
+active_template_set_version}`. (`/templates/{user_id}/replenish` remains as a hidden alias.)
+This is also how a migrated user with a pool of one set gets standby sets.
+
+## Enrollment profile and buildings
+
+### `GET /user/{user_id}/enrollment-status`
+
+Optional query `application_id`. Which modalities the user has enrolled and the status of each (always `200`; an unknown user
+simply has nothing registered):
+
+```json
+{"user_id": "USER001", "application_id": "capstone-demo",
+ "modalities": {"face": true, "fingerprint": false, "voice": false},
+ "statuses": {"face": "REGISTERED", "fingerprint": "NOT_REGISTERED", "voice": "RETRY_REQUIRED"}}
+```
+
+`statuses`: `NOT_REGISTERED`, `REGISTERED`, `UPDATED` (re-enrolled), `RETRY_REQUIRED` (voice only - the last enrollment failed the
+two-recording check; nothing was stored).
+
+### `GET /buildings` and `GET /building/{building_id}`
+
+Buildings are authentication context only - no `required_modalities`:
+
+```json
+[{"id": "national_data_center", "name": "National Data Centre", "description": "...", "clearance_level": "IV"}, "..."]
+```
+
+`404` for an unknown building. The source is `config/buildings.json`; a file that defines `required_modalities` is rejected.
+
+### Audit log entries
+
+`GET /audit/{user_id}` and `/audit/system` entries add `authentication_state` (`ACCESS_GRANTED` / `ACCESS_DENIED` /
+`ENROLLMENT_REQUIRED`), `submitted_modalities`, `enrolled_modalities`, `authenticated_modalities`, `template_set_version`,
+`template_set_status` (alongside `building_id`, `fusion_similarity`, `latency_ms`). Per-modality similarities are returned only
+with `DEBUG_SCORES=true`.
 
 ## `GET /user/{id}`
 
@@ -183,7 +321,7 @@ Liveness check: `{"status": "ok"}`. No auth, no dependencies touched.
 |---|---|
 | `400 Bad Request` | Uploaded file isn't a decodable image |
 | `404 Not Found` | `GET /user/{id}` for an unenrolled user |
-| `409 Conflict` | Two concurrent `/enroll` or `/revoke-template` calls raced for the same (user, modality, application) — retry |
+| `409 Conflict` | Two concurrent template writes raced for the same (user, modality, application) — retry; or the template set pool is exhausted / already full |
 | `413 Request Entity Too Large` | Upload exceeds `Settings.max_upload_size_bytes` |
 | `415 Unsupported Media Type` | Upload's content-type isn't in `Settings.allowed_content_types` (images) or `Settings.allowed_audio_content_types` (voice) |
 | `422 Unprocessable Entity` | Unknown `modality` value, or a missing required field |
@@ -198,3 +336,10 @@ See `.env.example` for the full list of environment variables
 `TEMPLATE_BITS`, `MATCH_THRESHOLD`) and `backend/config.py` for what each one
 does and its default. `MASTER_SECRET` has no default and must be set - the
 server fails to start without it, by design.
+
+Multi-template settings (environment variables): `TEMPLATE_POOL_SIZE` (default `4`,
+template sets created at enrollment) and `DEBUG_SCORES` (default
+`false`; when `true`, responses and the audit API also carry the internal
+per-modality scores - never enable in production).
+
+Building policy file: `BUILDINGS_CONFIG_PATH` (default `config/buildings.json`).

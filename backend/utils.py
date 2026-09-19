@@ -122,6 +122,13 @@ def record_authentication_audit(
     building_id: str | None = None,
     fusion_score: float | None = None,
     fusion_policy: str | None = None,
+    fusion_similarity: float | None = None,
+    template_set_version: int | None = None,
+    template_set_status: str | None = None,
+    authentication_state: str | None = None,
+    submitted_modalities: list[str] | None = None,
+    enrolled_modalities: list[str] | None = None,
+    authenticated_modalities: list[str] | None = None,
 ) -> None:
     """Write one server-side audit row for an authentication attempt.
 
@@ -148,6 +155,13 @@ def record_authentication_audit(
         key_versions=key_versions,
         fusion_score=fusion_score,
         fusion_policy=fusion_policy,
+        fusion_similarity=fusion_similarity,
+        template_set_version=template_set_version,
+        template_set_status=template_set_status,
+        authentication_state=authentication_state,
+        submitted_modalities=submitted_modalities,
+        enrolled_modalities=enrolled_modalities,
+        authenticated_modalities=authenticated_modalities,
     )
 
 
