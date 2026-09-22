@@ -62,11 +62,13 @@ def _enroll(client: TestClient, image_bytes: bytes, user_id: str = "U001", modal
     )
 
 
-def test_health():
-    from backend.main import app
-
-    with TestClient(app) as test_client:
-        response = test_client.get("/health")
+def test_health(client):
+    # `client` (not a bare `TestClient(app)`) so this gets its own fresh, empty database - the
+    # process-global `app`'s cached engine/session may otherwise point at whatever database an
+    # earlier test in this session left with existing templates, which now legitimately trips
+    # backend/key_continuity.py's startup check (a real database in that state should fail to
+    # start) even though this test only cares that the bare /health endpoint returns 200.
+    response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 

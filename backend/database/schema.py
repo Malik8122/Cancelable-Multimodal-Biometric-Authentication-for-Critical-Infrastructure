@@ -98,6 +98,12 @@ class AuthenticationDecision(BaseModel):
     fused_score: float | None = None
     results: dict[str, "ModalityAuthenticationResult"] | None = None
     failed_modalities: list[str] | None = None
+    #: Local-development observability only (fusion/diagnostics.py::build_fusion_diagnostics) -
+    #: per-modality score/threshold/status, the fusion weights actually applied, the fused score,
+    #: threshold, policy, and final access_granted - all read from the same values this response's
+    #: other DEBUG_SCORES-only fields already carry, never recomputed. Never the raw image,
+    #: embedding, protected template, or any key material.
+    fusion_diagnostics: dict | None = None
 
 
 class ModalityAuthenticationResult(BaseModel):
@@ -109,6 +115,16 @@ class ModalityAuthenticationResult(BaseModel):
     distance: float = 0.0
     template_version: int = 0
     key_version: int = 0
+    #: True only when a per-modality result exists at all: `call_modality_service` fails the whole
+    #: request closed (422) before this object is built if no face was detected in the capture, so
+    #: reaching this point tautologically means detection + embedding both succeeded.
+    face_detected: bool = True
+    embedding_generated: bool = True
+    #: Whether this modality's embedder is running on the real trained checkpoint (False) or the
+    #: deterministic mock fallback (True) - see `models/common/base_embedder.py`.
+    mock_embedder: bool = False
+    #: Stored template's lifecycle status (e.g. "ACTIVE"), "" if nothing was enrolled.
+    template_status: str = ""
 
 
 AuthenticationDecision.model_rebuild()
@@ -247,6 +263,10 @@ class SystemHealthResponse(BaseModel):
     thresholds_loaded: bool
     audit_logging: bool
     template_pool_size: int = 4
+    #: "ok" / "no_fingerprint_recorded" / "mismatch" / "no_templates_yet" - whether the currently
+    #: configured MASTER_SECRET matches the one that protected this database's existing templates
+    #: (backend/key_continuity.py). Never the secret or the fingerprint itself.
+    key_continuity: str = "ok"
 
 
 class EnrollmentStatusResponse(BaseModel):

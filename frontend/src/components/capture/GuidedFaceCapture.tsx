@@ -1,21 +1,24 @@
-import { motion } from 'motion/react'
-import { AlertCircle, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, Upload } from 'lucide-react'
+import { AlertCircle, Camera, Check, Loader2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { checkFacePose } from '../../api/client'
 import { ApiError, type FacePose } from '../../api/types'
-import { useReducedMotion } from '../../hooks/useReducedMotion'
 
 export const FACE_POSE_ORDER: FacePose[] = ['front', 'left', 'right', 'up', 'down']
 
-const POSES: Record<FacePose, { label: string; instruction: string; arrow: typeof ChevronUp | null; position: string }> = {
-  front: { label: 'Front', instruction: 'Look straight at the camera', arrow: null, position: '' },
-  left: { label: 'Left', instruction: 'Turn your head slightly to the left', arrow: ChevronLeft, position: 'left-2 top-1/2 -translate-y-1/2' },
-  right: { label: 'Right', instruction: 'Turn your head slightly to the right', arrow: ChevronRight, position: 'right-2 top-1/2 -translate-y-1/2' },
-  up: { label: 'Slight Up', instruction: 'Tilt your chin slightly up', arrow: ChevronUp, position: 'top-2 left-1/2 -translate-x-1/2' },
-  down: { label: 'Slight Down', instruction: 'Tilt your chin slightly down', arrow: ChevronDown, position: 'bottom-2 left-1/2 -translate-x-1/2' },
-}
+// Five full-face, forward-facing captures, presented to the user as ONE "Face Registration"
+// process (not five separate named steps) - NOT deliberate head turns, and no directional
+// instructions, pose names, or arrows are shown anywhere in this component. The face
+// preprocessing pipeline (preprocessing/face.py) crops by bounding box only, with no
+// landmark-based rotation correction, so a deliberately rotated enrollment capture measurably
+// hurts the resulting centroid's similarity to a normal, frontal live authentication capture
+// (see the alignment investigation). The keys (front/left/right/up/down) below are unchanged
+// internal identifiers only - the five-accepted-embeddings mechanism underneath (and everything
+// backend/API-side) is unchanged; this is a presentation-only simplification.
 
 const ACCEPTED = ['image/jpeg', 'image/jpg', 'image/png']
+
+//: How long the "Sample captured" confirmation shows before the UI returns to the idle prompt.
+const CAPTURED_MESSAGE_MS = 1100
 
 interface Props {
   /** Called whenever the set of accepted poses changes. The enrollment is ready when all five are present. */
@@ -23,15 +26,18 @@ interface Props {
   disabled?: boolean
 }
 
-// One-time face enrollment as a 5-step guided experience with a circular face guide: Front, Left, Right, Slight Up, Slight
-// Down. Each capture is checked by the backend immediately (MTCNN + blur check, nothing stored); a rejected pose - no face,
-// or blurry - is retaken on the spot. Nothing else about a capture is judged. Authentication does NOT use this component:
-// it is a single camera capture with no head-turn prompts.
+// One-time "Face Registration": a single camera preview with a simple sample-count progress
+// indicator, backed by the existing five-accepted-capture mechanism (five embeddings -> one
+// centroid, unchanged). Each capture is checked by the backend immediately (face detection +
+// quality gating, nothing stored); a rejected capture - no face, more than one face, blurry, too
+// small/off-center/angled in frame, or low detection confidence - is retaken on the spot, exactly
+// as before. Authentication does NOT use this component: it is a single camera capture with no
+// guided prompts.
 export function GuidedFaceCapture({ onChange, disabled }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const cancelledRef = useRef(false)
-  const reducedMotion = useReducedMotion()
+  const capturedMessageTimeoutRef = useRef<number | null>(null)
 
   const [streamActive, setStreamActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
@@ -39,6 +45,7 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
   const [step, setStep] = useState(0)
   const [checking, setChecking] = useState(false)
   const [rejection, setRejection] = useState<string | null>(null)
+  const [justCaptured, setJustCaptured] = useState(false)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -63,9 +70,17 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
     }
   }, [])
 
-  const complete = FACE_POSE_ORDER.every((pose) => poses[pose])
+  useEffect(() => {
+    return () => {
+      if (capturedMessageTimeoutRef.current !== null) window.clearTimeout(capturedMessageTimeoutRef.current)
+    }
+  }, [])
+
+  // The progress indicator reflects only ACCEPTED captures - a rejected/retaken capture never
+  // advances it, since `poses` only ever gains an entry once the backend has confirmed VALID.
+  const acceptedCount = FACE_POSE_ORDER.filter((pose) => poses[pose]).length
+  const complete = acceptedCount === FACE_POSE_ORDER.length
   const currentPose = FACE_POSE_ORDER[Math.min(step, FACE_POSE_ORDER.length - 1)]
-  const meta = POSES[currentPose]
 
   const grabFrame = (): Promise<Blob | null> => {
     const video = videoRef.current
@@ -74,7 +89,10 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     canvas.getContext('2d')?.drawImage(video, 0, 0)
-    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.92))
+    // PNG (lossless), matching FaceCapture.tsx's authentication capture exactly - previously this
+    // used lossy JPEG (q=0.92) while authentication used PNG, an unnecessary encoding difference
+    // between the two capture paths (see the alignment investigation).
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'))
   }
 
   // Ask the backend whether this capture is usable; accept it and move on, or explain and let the user retake.
@@ -95,6 +113,9 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
       setPoses(next)
       onChange(next)
       setStep((s) => Math.min(s + 1, FACE_POSE_ORDER.length))
+      setJustCaptured(true)
+      if (capturedMessageTimeoutRef.current !== null) window.clearTimeout(capturedMessageTimeoutRef.current)
+      capturedMessageTimeoutRef.current = window.setTimeout(() => setJustCaptured(false), CAPTURED_MESSAGE_MS)
     } catch (err) {
       setRejection(err instanceof ApiError ? err.detail : 'The backend is unreachable.')
     } finally {
@@ -102,46 +123,15 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
     }
   }
 
-  const retakePose = (pose: FacePose) => {
-    const next = { ...poses }
-    delete next[pose]
-    setPoses(next)
-    onChange(next)
-    setStep(FACE_POSE_ORDER.indexOf(pose))
-    setRejection(null)
-  }
-
   const ringClass = rejection ? 'border-danger' : complete ? 'border-success' : 'border-primary/70'
-  const Arrow = complete ? null : meta.arrow
 
   return (
     <div className="rounded-2xl border border-border bg-card/60 p-5 backdrop-blur-xl">
-      <ol className="mb-5 flex flex-wrap justify-center gap-2" aria-label="Enrollment steps">
-        {FACE_POSE_ORDER.map((pose, index) => {
-          const done = !!poses[pose]
-          const active = !complete && index === step
-          return (
-            <li key={pose}>
-              <button
-                type="button"
-                disabled={!done || checking || disabled}
-                onClick={() => retakePose(pose)}
-                title={done ? `Retake ${POSES[pose].label}` : undefined}
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                  done
-                    ? 'border-success/30 bg-success/10 text-success hover:border-success/60'
-                    : active
-                      ? 'border-primary/50 bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground'
-                }`}
-              >
-                {done ? <Check className="h-3 w-3" strokeWidth={2} /> : <span>{index + 1}</span>}
-                {POSES[pose].label}
-              </button>
-            </li>
-          )
-        })}
-      </ol>
+      {/* "Face Registration" is this section's header (the enclosing EnrollmentCard's title in
+          RegisterPage.tsx) - this is its subtitle, not a second header. */}
+      <p className="mb-4 text-center text-sm text-muted-foreground">
+        Look naturally at the camera. We&apos;ll take a few quick samples to create your face profile.
+      </p>
 
       {/* Circular face guide */}
       <div className="mx-auto mb-4 flex justify-center">
@@ -154,16 +144,6 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
               </div>
             )}
           </div>
-          {Arrow && (
-            <motion.span
-              key={currentPose}
-              className={`absolute ${meta.position} flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg`}
-              animate={reducedMotion ? undefined : { opacity: [1, 0.45, 1] }}
-              transition={{ duration: 1.2, repeat: Infinity }}
-            >
-              <Arrow className="h-5 w-5" strokeWidth={2.25} />
-            </motion.span>
-          )}
           {complete && (
             <span className="absolute right-3 bottom-3 flex h-9 w-9 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg">
               <Check className="h-5 w-5" strokeWidth={2.5} />
@@ -172,20 +152,35 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
         </div>
       </div>
 
+      {/* Progress: accepted-sample count only - a rejected/retaken capture never advances this. */}
+      <div className="mb-4 flex flex-col items-center gap-1.5">
+        <div className="flex items-center gap-1.5" role="img" aria-label={`${acceptedCount} of ${FACE_POSE_ORDER.length} samples captured`}>
+          {FACE_POSE_ORDER.map((pose, index) => (
+            <span
+              key={pose}
+              className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                poses[pose] ? 'bg-success' : index === step && !complete ? 'border border-primary/60' : 'border border-border'
+              }`}
+            />
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {acceptedCount} of {FACE_POSE_ORDER.length} samples
+        </p>
+      </div>
+
       <div className="mb-4 text-center">
         {complete ? (
           <>
-            <p className="text-sm font-medium text-success">All five poses captured</p>
-            <p className="mt-1 text-xs text-muted-foreground">Select a pose above to retake it, or enroll now.</p>
+            <p className="text-sm font-medium text-success">Face registration complete</p>
+            <p className="mt-1 text-xs text-muted-foreground">Your face profile has been created.</p>
           </>
+        ) : justCaptured ? (
+          <p className="flex items-center justify-center gap-1.5 text-sm font-medium text-success">
+            <Check className="h-4 w-4" strokeWidth={2.5} /> Sample captured
+          </p>
         ) : (
-          <>
-            <p className="text-xs text-muted-foreground">
-              Step {step + 1} of {FACE_POSE_ORDER.length}
-            </p>
-            <p className="text-base font-medium text-foreground">{meta.label}</p>
-            <p className="text-sm text-muted-foreground">{meta.instruction}</p>
-          </>
+          <p className="text-sm text-muted-foreground">Hold still and look at the camera.</p>
         )}
         {rejection && (
           <p className="mx-auto mt-3 flex max-w-xs items-start justify-center gap-1.5 text-xs text-danger">
@@ -198,7 +193,7 @@ export function GuidedFaceCapture({ onChange, disabled }: Props) {
         <div className="flex gap-2.5">
           <button
             type="button"
-            onClick={() => void grabFrame().then((blob) => submitCapture(blob, `face-${currentPose}.jpg`))}
+            onClick={() => void grabFrame().then((blob) => submitCapture(blob, `face-${currentPose}.png`))}
             disabled={disabled || checking || !streamActive}
             className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-sm font-medium text-primary-foreground shadow-md shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
           >

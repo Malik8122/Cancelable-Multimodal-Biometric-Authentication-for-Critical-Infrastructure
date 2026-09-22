@@ -153,6 +153,38 @@ class ProtectedTemplate(Base):
     )
 
 
+#: Singleton row id for `MasterSecretFingerprint` below - the model's primary key is always this
+#: fixed value, which is what makes "at most one row" true by construction: a second row would
+#: have to reuse this same primary key and either collide or simply be the same row.
+MASTER_SECRET_FINGERPRINT_ID = 1
+
+
+class MasterSecretFingerprint(Base):
+    """At most one row (see `MASTER_SECRET_FINGERPRINT_ID`): a one-way fingerprint of the
+    MASTER_SECRET that protected this database's existing biometric templates.
+
+    Never the secret itself - `fingerprint` is `backend/secret_fingerprint.py::fingerprint_master_secret`'s
+    output, a one-way HKDF-SHA256 derivation over a fixed public context
+    ("master_secret_fingerprint/v1"), deliberately unrelated to and never reachable from
+    `template_protection/hkdf_keys.py::derive_key`'s per-(user, modality, application, key_version)
+    template key material - this row exists to answer "is the currently configured MASTER_SECRET
+    the same one used before?", never "what is the secret?".
+
+    `backend/key_continuity.py` compares a fresh fingerprint of the currently configured
+    MASTER_SECRET against this row at startup, refusing to start rather than silently authenticate
+    every enrolled user against a wrong key - see docs/AUTHENTICATION_RELIABILITY_REPORT.md for the
+    real incident this exists to prevent from recurring.
+    """
+
+    __tablename__ = "master_secret_fingerprint"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: 32 bytes, opaque, one-way. Never printed/logged (backend/key_continuity.py only ever
+    #: compares it with `hmac.compare_digest`) and never exposed through any API response.
+    fingerprint: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class AuditLog(Base):
     """Server-side authentication attempt history - metadata only.
 

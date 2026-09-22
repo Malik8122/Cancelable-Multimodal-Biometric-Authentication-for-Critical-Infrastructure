@@ -16,7 +16,7 @@ const ICON: Partial<Record<Modality, typeof ScanFace>> = { face: ScanFace, finge
 export function CheckpointPage() {
   const { buildingId } = useParams<{ buildingId: string }>()
   const { getBuilding, status: buildingsStatus } = useBuildings()
-  const { userId } = useSession()
+  const { userId, knownUsers, switchUser, registerNewUser } = useSession()
   const building = buildingId ? getBuilding(buildingId) : undefined
   const { statuses, enrolledList, error, loading } = useEnrollmentProfile(userId)
 
@@ -50,6 +50,30 @@ export function CheckpointPage() {
         <ClearanceBadge level={building.clearanceLevel} />
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">Access Verification Terminal</h1>
         <p className="max-w-md text-sm text-muted-foreground">{building.description}</p>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 0.1 }}
+        className="relative mb-4 w-full max-w-md rounded-2xl border border-border bg-card/60 p-5 backdrop-blur-xl"
+      >
+        <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground">Registered User</p>
+        {knownUsers.length > 1 ? (
+          <select
+            value={userId}
+            onChange={(e) => switchUser(e.target.value)}
+            className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm text-foreground"
+          >
+            {knownUsers.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-sm font-medium text-foreground">{userId}</p>
+        )}
       </motion.div>
 
       <motion.div
@@ -122,6 +146,16 @@ export function CheckpointPage() {
             Manage biometric enrollment
           </Link>
         )}
+        {/* Always available, even with only one known user - a different person enrolling never
+            overwrites this user's templates: it switches the active session to a brand-new
+            user_id first (useAuthSession::registerNewUser), then goes to registration for it. */}
+        <Link
+          to={`/building/${building.id}/register`}
+          onClick={() => registerNewUser()}
+          className="text-xs font-medium text-primary transition-colors hover:underline"
+        >
+          + New Registration
+        </Link>
       </motion.div>
     </div>
   )

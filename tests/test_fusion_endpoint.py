@@ -192,6 +192,114 @@ def test_fusion_submitting_a_never_enrolled_face_is_enrollment_required(client, 
     assert body["fused_score"] == pytest.approx(expected_fused)
 
 
+def test_fusion_diagnostics_present_and_matches_the_real_response_values(client):
+    """`fusion_diagnostics` (DEBUG_SCORES=true, on by default in this suite - see conftest.py)
+    must report the exact same numbers already present elsewhere in the response - it's a
+    reshaping of existing values, never a second, independently-computed fusion result."""
+    fingerprint_bytes = _encode_png(_synthetic_fingerprint_image())
+    voice_bytes = _encode_wav(_tone())
+
+    client.post(
+        "/enroll",
+        data={"user_id": "U-FUSION-DIAG-1", "modality": "fingerprint", "application_id": APPLICATION_ID},
+        files={"image": ("fp.png", fingerprint_bytes, "image/png")},
+    )
+    client.post(
+        "/enroll",
+        data={"user_id": "U-FUSION-DIAG-1", "modality": "voice", "application_id": APPLICATION_ID},
+        files={"image": ("sample.wav", voice_bytes, "audio/wav")},
+    )
+
+    response = client.post(
+        "/authenticate/fusion",
+        data={"user_id": "U-FUSION-DIAG-1", "application_id": APPLICATION_ID},
+        files={
+            "fingerprint_image": ("fp.png", fingerprint_bytes, "image/png"),
+            "voice_audio": ("sample.wav", voice_bytes, "audio/wav"),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    diagnostics = body["fusion_diagnostics"]
+
+    for modality in ("fingerprint", "voice"):
+        assert diagnostics[modality]["score"] == pytest.approx(body["results"][modality]["score"])
+        assert diagnostics[modality]["threshold"] == pytest.approx(body["results"][modality]["threshold"])
+        assert diagnostics[modality]["verified"] == body["results"][modality]["authenticated"]
+
+    # face was never submitted this request - represented, never fabricated.
+    assert diagnostics["face"] == {"score": None, "threshold": None, "verified": None, "status": "not_presented"}
+
+    assert diagnostics["weights"] == {"fingerprint": 0.5, "voice": 0.5}
+    assert diagnostics["fused_score"] == pytest.approx(body["fused_score"])
+    assert diagnostics["threshold"] == pytest.approx(body["fusion_threshold"])
+    assert diagnostics["policy"] == body["fusion_policy"]
+    assert diagnostics["access_granted"] == body["authenticated"]
+
+
+def test_fusion_diagnostics_decision_matches_backend_even_when_fused_score_alone_would_mislead(client):
+    """The real end-to-end version of the ALL_REQUIRED override: enroll fingerprint and voice with
+    matching samples (both pass individually, fused score should be high), then confirm the
+    diagnostics' access_granted always equals the backend's actual `authenticated` - never an
+    independently-derived "fused_score >= threshold" shortcut, which is exactly the bug
+    fusion/config.py's docstring documents ALL_REQUIRED was introduced to fix."""
+    fingerprint_bytes = _encode_png(_synthetic_fingerprint_image())
+    voice_bytes = _encode_wav(_tone())
+
+    client.post(
+        "/enroll",
+        data={"user_id": "U-FUSION-DIAG-2", "modality": "fingerprint", "application_id": APPLICATION_ID},
+        files={"image": ("fp.png", fingerprint_bytes, "image/png")},
+    )
+    client.post(
+        "/enroll",
+        data={"user_id": "U-FUSION-DIAG-2", "modality": "voice", "application_id": APPLICATION_ID},
+        files={"image": ("sample.wav", voice_bytes, "audio/wav")},
+    )
+
+    response = client.post(
+        "/authenticate/fusion",
+        data={"user_id": "U-FUSION-DIAG-2", "application_id": APPLICATION_ID},
+        files={
+            "fingerprint_image": ("fp.png", fingerprint_bytes, "image/png"),
+            "voice_audio": ("sample.wav", voice_bytes, "audio/wav"),
+        },
+    )
+    body = response.json()
+    diagnostics = body["fusion_diagnostics"]
+
+    # The displayed/reported decision must match the backend's real decision under ALL_REQUIRED:
+    # every submitted modality individually verified, never inferred from fused_score alone.
+    all_verified = all(diagnostics[m]["verified"] for m in ("fingerprint", "voice"))
+    assert diagnostics["access_granted"] == (all_verified and body["authenticated"])
+    assert diagnostics["access_granted"] == body["authenticated"]
+
+
+def test_fusion_diagnostics_omitted_from_production_responses(client, monkeypatch):
+    """DEBUG_SCORES=false (production) must not expose fusion_diagnostics, same as the other
+    per-modality debug-only fields (see test_flexible_auth.py::test_production_response_exposes_only_the_fusion_values)."""
+    monkeypatch.setenv("DEBUG_SCORES", "false")
+    from backend.config import get_settings
+
+    get_settings.cache_clear()
+
+    wav_bytes = _encode_wav(_tone())
+    client.post(
+        "/enroll",
+        data={"user_id": "U-FUSION-DIAG-3", "modality": "voice", "application_id": APPLICATION_ID},
+        files={"image": ("sample.wav", wav_bytes, "audio/wav")},
+    )
+    response = client.post(
+        "/authenticate/fusion",
+        data={"user_id": "U-FUSION-DIAG-3", "application_id": APPLICATION_ID},
+        files={"voice_audio": ("sample.wav", wav_bytes, "audio/wav")},
+    )
+    assert response.status_code == 200
+    assert "fusion_diagnostics" not in response.json()
+
+    get_settings.cache_clear()  # restore DEBUG_SCORES=true for any test after this one in the same session
+
+
 def test_fusion_unenrolled_modality_is_enrollment_required_not_a_zero_score(client):
     """A submitted modality that was never enrolled is ENROLLMENT_REQUIRED (409): it is not authenticated and not
     scored - never silently dropped, never fabricated as a zero-score failure."""

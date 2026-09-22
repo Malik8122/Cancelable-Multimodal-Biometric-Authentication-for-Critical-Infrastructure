@@ -24,10 +24,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.database.models import (
+    MASTER_SECRET_FINGERPRINT_ID,
     STATUS_ACTIVE,
     STATUS_REVOKED,
     STATUS_STANDBY,
     EnrollmentEvent,
+    MasterSecretFingerprint,
     ProtectedTemplate,
     User,
 )
@@ -60,6 +62,57 @@ class PoolEntry:
 
     key_version: int
     protected_template: bytes
+
+
+def count_protected_templates(db: Session) -> int:
+    """Total protected-template rows in this database, across every user/modality/application.
+
+    Used only by the MASTER_SECRET key-continuity check (`backend/key_continuity.py`) to decide
+    whether "no fingerprint recorded" is safe to auto-initialize (nothing to protect yet) or a
+    hard-fail condition (existing templates whose protecting secret can no longer be verified).
+    """
+    return db.execute(select(func.count()).select_from(ProtectedTemplate)).scalar_one()
+
+
+def get_master_secret_fingerprint(db: Session) -> MasterSecretFingerprint | None:
+    """The single global MASTER_SECRET fingerprint row, if one has been recorded yet."""
+    return db.get(MasterSecretFingerprint, MASTER_SECRET_FINGERPRINT_ID)
+
+
+def initialize_master_secret_fingerprint(db: Session, fingerprint: bytes) -> MasterSecretFingerprint:
+    """Record the MASTER_SECRET fingerprint for the very first time.
+
+    Startup-only (`backend/key_continuity.py`), and only ever invoked when no protected templates
+    exist yet - there is nothing at stake for an auto-initialize to get wrong. Raises if a row
+    already exists rather than overwriting it: replacing an existing fingerprint is
+    `rotate_master_secret_fingerprint`'s job alone, gated behind the operator's explicit,
+    deliberate confirmation (`scripts/rotate_master_secret.py`).
+    """
+    if get_master_secret_fingerprint(db) is not None:
+        raise ValueError("A MASTER_SECRET fingerprint is already recorded; refusing to overwrite it implicitly.")
+    row = MasterSecretFingerprint(id=MASTER_SECRET_FINGERPRINT_ID, fingerprint=fingerprint)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def rotate_master_secret_fingerprint(db: Session, fingerprint: bytes) -> MasterSecretFingerprint:
+    """Overwrite (or create) the MASTER_SECRET fingerprint. `scripts/rotate_master_secret.py` ONLY.
+
+    This is the one deliberate exception to `initialize_master_secret_fingerprint`'s
+    never-overwrite rule: it exists so an operator can explicitly acknowledge a genuine key
+    rotation (e.g. an unrecoverable old secret) after making that decision themselves - never as
+    a side effect of normal server startup.
+    """
+    row = get_master_secret_fingerprint(db)
+    if row is None:
+        row = MasterSecretFingerprint(id=MASTER_SECRET_FINGERPRINT_ID, fingerprint=fingerprint)
+        db.add(row)
+    else:
+        row.fingerprint = fingerprint
+        row.created_at = _now()
+    db.commit()
+    return row
 
 
 @dataclass(frozen=True)

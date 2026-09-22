@@ -21,10 +21,13 @@ export interface EnrollResponse {
   recording_quality?: RecordingQuality
 }
 
-// Face enrollment is one guided five-pose capture. Per pose the backend runs MTCNN + alignment + one embedding and rejects
-// ONLY a blurry or faceless capture; the valid embeddings are averaged into a centroid and the templates come from it alone.
+// Face enrollment is one guided five-capture protocol (mostly-frontal, not head turns - see
+// GuidedFaceCapture.tsx). Per capture the backend runs MTCNN + alignment + quality gating and
+// rejects a capture that has no face, more than one face, is blurry, or is too small/off-center/
+// angled in frame, or too low-confidence a detection; the valid embeddings are averaged into a
+// centroid and the templates come from it alone.
 export type FacePose = 'front' | 'left' | 'right' | 'up' | 'down'
-export type PoseStatus = 'VALID' | 'NO_FACE' | 'BLURRY'
+export type PoseStatus = 'VALID' | 'NO_FACE' | 'BLURRY' | 'MULTIPLE_FACES' | 'TOO_SMALL' | 'OFF_CENTER' | 'TOO_ANGLED' | 'LOW_CONFIDENCE'
 
 export interface PoseResult {
   pose: FacePose
@@ -92,6 +95,38 @@ export interface AuthenticationDecision {
   authentication_time_ms: number
   /** The facility label of the session (context only). */
   building_id?: string
+  /**
+   * Local-development observability only - present exclusively when the backend runs with
+   * DEBUG_SCORES=true (see backend/services/authentication.py::to_public_response and
+   * fusion/diagnostics.py::build_fusion_diagnostics). Absent in production responses.
+   */
+  fusion_diagnostics?: FusionDiagnostics
+}
+
+export type FusionModalityStatus = 'verified' | 'failed_below_threshold' | 'not_presented'
+
+export interface FusionModalityDiagnostics {
+  /** Hamming similarity in [0, 1], or null when this modality was not presented. */
+  score: number | null
+  /** The per-modality threshold that score was compared against, or null when not presented. */
+  threshold: number | null
+  verified: boolean | null
+  status: FusionModalityStatus
+}
+
+export interface FusionDiagnostics {
+  face: FusionModalityDiagnostics
+  fingerprint: FusionModalityDiagnostics
+  voice: FusionModalityDiagnostics
+  /** Fusion weight actually applied to each presented modality (fusion/score_fusion.py) - sums to 1. */
+  weights: Partial<Record<Modality, number>>
+  /** fusion/score_fusion.py::fuse_scores's real output - the same value as fusion_similarity/fused_score above. */
+  fused_score: number
+  threshold: number
+  policy: FusionPolicy
+  /** The backend's real access decision (same as `authenticated` above) - under ALL_REQUIRED this
+   * is NOT simply fused_score >= threshold; one failed modality denies access regardless. */
+  access_granted: boolean
 }
 
 // HTTP 409 body of /authenticate/fusion: a modality the user SUBMITTED is not enrolled.

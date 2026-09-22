@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import type { AuthenticationOutcome } from '../api/types'
 import { AccessDecisionHero } from '../components/biometric/AccessDecisionHero'
 import { DecisionSummary } from '../components/biometric/DecisionSummary'
+import { FusionDiagnosticsPanel } from '../components/biometric/FusionDiagnosticsPanel'
 import { MODALITY_LABEL } from '../config/buildings'
 import { useBuildings } from '../context/BuildingsContext'
 import { useReducedMotion } from '../hooks/useReducedMotion'
@@ -74,6 +75,10 @@ export function ResultPage() {
 
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: tailDelay }} className="mb-8">
         <DecisionSummary result={result} buildingName={building.name} />
+      </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: tailDelay + 0.05 }}>
+        <FusionDiagnosticsPanel result={result} />
       </motion.div>
 
       <motion.div

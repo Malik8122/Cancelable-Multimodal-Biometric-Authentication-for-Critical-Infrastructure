@@ -576,6 +576,27 @@ def _legacy_db(tmp_path, monkeypatch, templates_ddl):
     return connection
 
 
+def _seed_matching_master_secret_fingerprint():
+    """Record a MASTER_SECRET fingerprint matching this suite's fixed test secret.
+
+    These tests insert legacy `protected_templates` rows directly via raw SQL to simulate a real
+    pre-migration production database, then start the app to prove `upgrade_schema()`'s migration
+    logic. That's a separate concern from `backend/key_continuity.py`'s startup check (see
+    tests/test_key_continuity.py for that) - without this, a legacy database with existing
+    templates and no recorded fingerprint would correctly, but irrelevantly to what these tests
+    are about, hit that check's hard-fail. Call after closing the raw `sqlite3` connection above,
+    before starting `TestClient(app)`.
+    """
+    from backend.database import crud
+    from backend.database.migration import upgrade_schema
+    from backend.database.session import get_engine, get_session_factory
+    from backend.secret_fingerprint import fingerprint_master_secret
+
+    upgrade_schema(get_engine())  # creates master_secret_fingerprint; idempotent, the app repeats this at its own startup
+    with get_session_factory()() as db:
+        crud.initialize_master_secret_fingerprint(db, fingerprint_master_secret("unit-test-master-secret-not-for-production"))
+
+
 def test_pre_pool_single_template_database_migrates_into_set_one_and_keeps_authenticating(tmp_path, monkeypatch):
     from backend.services.iris_service import get_iris_service
     from template_protection.biohash import generate_template
@@ -590,6 +611,7 @@ def test_pre_pool_single_template_database_migrates_into_set_one_and_keeps_authe
     connection.execute("INSERT INTO protected_templates VALUES ('old-dead', ?, 'iris', ?, 1, 2, 256, ?, 0, '2025-12-01 00:00:00')", (USER, APPLICATION_ID, bits))
     connection.commit()
     connection.close()
+    _seed_matching_master_secret_fingerprint()
 
     from backend.main import app
 
@@ -630,6 +652,7 @@ def test_previous_per_modality_pools_are_converted_to_sets_even_if_modalities_dr
     connection.executemany("INSERT INTO protected_templates VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     connection.commit()
     connection.close()
+    _seed_matching_master_secret_fingerprint()
 
     from backend.main import app
 

@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from backend.config import Settings, get_settings
 from backend.database.schema import SystemHealthResponse
 from backend.database.session import get_db
+from backend.key_continuity import evaluate_key_continuity
 from backend.services.base_service import ModalityService
 from backend.services.face_service import get_face_service
 from backend.services.fingerprint_service import get_fingerprint_service
@@ -86,6 +87,11 @@ def system_health(db: Session = Depends(get_db), settings: Settings = Depends(ge
 
     thresholds_loaded = all(is_calibrated(modality) for modality in ("face", "fingerprint", "voice"))
 
+    try:
+        key_continuity = evaluate_key_continuity(db, settings).value
+    except Exception as error:  # noqa: BLE001 - health check must never 500
+        key_continuity = f"error: {error}"
+
     return SystemHealthResponse(
         backend="online",
         database=database_status,
@@ -97,4 +103,5 @@ def system_health(db: Session = Depends(get_db), settings: Settings = Depends(ge
         thresholds_loaded=thresholds_loaded,
         audit_logging=True,
         template_pool_size=settings.template_pool_size,
+        key_continuity=key_continuity,
     )

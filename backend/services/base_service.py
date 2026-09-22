@@ -27,6 +27,7 @@ from backend.config import Settings
 from backend.database import crud
 from backend.database.models import ProtectedTemplate
 from backend.security_validation import assert_valid, validate_authentication
+from backend.services.face_debug import log_authentication_diagnostics, log_enrollment_pose_diagnostics
 from backend.services.face_enrollment import MIN_VALID_POSES, FaceCaptureRejected
 from backend.services.recording_quality import FAIR, FAIR_MESSAGE, POOR, POOR_MESSAGE, classify, cosine_similarity
 from backend.threshold_loader import get_modality_threshold
@@ -53,6 +54,12 @@ class AuthenticationResult:
     key_version: int = 0
     #: Version of the ACTIVE template set that was compared (0 when nothing is enrolled).
     template_set_version: int = 0
+    #: Diagnostic only (DEBUG_SCORES): whether the pipeline's embedder is the real trained
+    #: checkpoint (False) or the deterministic mock fallback (True, when no checkpoint is on disk).
+    mock_embedder: bool = False
+    #: Diagnostic only (DEBUG_SCORES): the stored template's lifecycle status (e.g. "ACTIVE"),
+    #: "" when nothing was enrolled for this modality.
+    template_status: str = ""
 
 
 class EnrollmentInconsistent(RuntimeError):
@@ -134,6 +141,11 @@ class ModalityService:
             if len(embeddings) < MIN_VALID_POSES:
                 raise FaceCaptureRejected(report)
             centroid = centroid_embedding(embeddings)
+            if self.settings.debug_scores:
+                # TEMPORARY (alignment investigation) - see backend/services/face_debug.py's own
+                # docstring for why this must run before `embeddings.clear()` below, and for the
+                # hard guarantee that only scalar cosine similarities are ever logged here.
+                log_enrollment_pose_diagnostics(embeddings, centroid)
         finally:
             embeddings.clear()  # the temporary per-pose embeddings are gone from here on
         try:
@@ -279,6 +291,13 @@ class ModalityService:
                 self.modality, embedding.shape[0], abs(norm - 1.0) < 1e-3, len(candidate_template),
                 stored.template_set_version, stored.key_version, stored.template_status, score, threshold, authenticated,
             )
+            if self.modality == "face":
+                # TEMPORARY (alignment investigation) - see backend/services/face_debug.py's own
+                # docstring for why `live_vs_centroid_cosine` is reported as unavailable rather
+                # than computed: the enrolled raw embedding never exists at this point. This call
+                # happens strictly AFTER `authenticated` above was already decided from `score` -
+                # it cannot influence the real authentication result.
+                log_authentication_diagnostics(score)
         return AuthenticationResult(
             score=score,
             threshold=threshold,
@@ -287,4 +306,6 @@ class ModalityService:
             template_version=stored.template_version,
             key_version=stored.key_version,
             template_set_version=stored.template_set_version,
+            mock_embedder=getattr(self.pipeline, "is_mock", False),
+            template_status=stored.template_status or "",
         )

@@ -18,8 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.api import audit, authenticate, buildings, enroll, fusion, metrics, revoke, system, templates, user, verify
+from backend.config import get_settings
 from backend.database.crud import ConcurrentEnrollmentError
-from backend.database.session import init_db
+from backend.database.session import get_session_factory, init_db
+from backend.key_continuity import KeyContinuityError, enforce_key_continuity_at_startup
 from backend.security_validation import SecurityValidationError
 
 logging.basicConfig(level=logging.INFO)
@@ -67,6 +69,16 @@ def _is_production() -> bool:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    db = get_session_factory()()
+    try:
+        enforce_key_continuity_at_startup(db, get_settings())
+    except KeyContinuityError as exc:
+        # Never the secret or the fingerprint - see backend/key_continuity.py's own messages,
+        # which are already safe to log/print in full.
+        logging.getLogger("backend").error("Startup refused: %s", exc)
+        raise
+    finally:
+        db.close()
     yield
 
 

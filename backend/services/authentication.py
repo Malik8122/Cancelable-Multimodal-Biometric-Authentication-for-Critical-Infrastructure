@@ -38,6 +38,7 @@ from backend.services.base_service import AuthenticationResult
 from backend.states import ACCESS_DENIED, ACCESS_GRANTED, ENROLLMENT_REQUIRED
 from backend.utils import call_modality_service, decode_biometric_sample, record_authentication_audit
 from fusion.config import DEFAULT_FUSION_POLICY, FusionPolicy
+from fusion.diagnostics import build_fusion_diagnostics
 from fusion.policy import evaluate_fusion_policy
 
 logger = logging.getLogger("backend.services.authentication")
@@ -267,6 +268,8 @@ def to_public_response(outcome: AuthenticationOutcome, settings: Settings) -> Au
                 distance=r.distance,
                 template_version=r.template_set_version,
                 key_version=r.key_version,
+                mock_embedder=r.mock_embedder,
+                template_status=r.template_status,
             )
             for m, r in outcome.per_modality.items()
         }
@@ -276,6 +279,16 @@ def to_public_response(outcome: AuthenticationOutcome, settings: Settings) -> Au
             response.score = only.score
             response.threshold = only.threshold
             response.distance = only.distance
+        response.fusion_diagnostics = build_fusion_diagnostics(
+            submitted_modalities=outcome.submitted_modalities,
+            scores={m: r.score for m, r in outcome.per_modality.items()},
+            thresholds={m: r.threshold for m, r in outcome.per_modality.items()},
+            individually_authenticated={m: r.authenticated for m, r in outcome.per_modality.items()},
+            fused_score=outcome.fusion_similarity,
+            fusion_threshold=outcome.fusion_threshold,
+            policy=outcome.policy.value,
+            access_granted=outcome.authenticated,
+        )
     return response
 
 

@@ -17,10 +17,41 @@ from models.face.inference import FaceEmbedder
 from models.fingerprint.inference import FingerprintEmbedder
 from models.iris.inference import IrisEmbedder
 from models.voice.inference import VoiceEmbedder
-from preprocessing.face import BLUR_MIN_SHARPNESS, FacePreprocessor
+from preprocessing.face import (
+    BLUR_MIN_SHARPNESS,
+    MAX_CENTER_OFFSET,
+    MAX_ROLL_DEGREES,
+    MAX_YAW_RATIO,
+    MIN_DETECTION_CONFIDENCE,
+    MIN_FACE_SIZE_RATIO,
+    FacePreprocessor,
+    MultipleFacesDetected,
+)
 from preprocessing.fingerprint import FingerprintPreprocessor
 from preprocessing.iris import IrisPreprocessor
 from preprocessing.voice import TARGET_SAMPLE_RATE, VoicePreprocessor
+
+
+def _evaluate_face_quality(detection) -> str:
+    """VALID / BLURRY / TOO_SMALL / OFF_CENTER / TOO_ANGLED / LOW_CONFIDENCE for one detected,
+    single face (`preprocessing.face.FaceDetection`).
+
+    Checked in a fixed order - confidence, then sharpness (the project's existing gate), then
+    size, centering, and angle (new: see preprocessing/face.py for how each threshold was
+    measured) - the first gate a capture fails is its verdict. `MULTIPLE_FACES`/`NO_FACE` are
+    decided earlier, by `FacePreprocessor.detect_and_align` itself raising before this is called.
+    """
+    if detection.probability < MIN_DETECTION_CONFIDENCE:
+        return "LOW_CONFIDENCE"
+    if detection.sharpness < BLUR_MIN_SHARPNESS:
+        return "BLURRY"
+    if detection.face_size_ratio < MIN_FACE_SIZE_RATIO:
+        return "TOO_SMALL"
+    if detection.center_offset > MAX_CENTER_OFFSET:
+        return "OFF_CENTER"
+    if abs(detection.roll_degrees) > MAX_ROLL_DEGREES or abs(detection.yaw_ratio) > MAX_YAW_RATIO:
+        return "TOO_ANGLED"
+    return "VALID"
 
 
 class ModalityPipeline:
@@ -50,32 +81,42 @@ class FacePipeline(ModalityPipeline):
         super().__init__(FacePreprocessor(device=device), FaceEmbedder(checkpoint_path=checkpoint_path, device=device))
 
     def check_capture(self, image: np.ndarray) -> str:
-        """Verdict for one enrollment pose: VALID, NO_FACE or BLURRY (nothing is embedded)."""
+        """Verdict for one enrollment pose (nothing is embedded): VALID, NO_FACE, MULTIPLE_FACES,
+        BLURRY, TOO_SMALL, OFF_CENTER, TOO_ANGLED, or LOW_CONFIDENCE."""
         try:
-            _, _, sharpness = self._preprocessor.detect_and_align(image)
+            detection = self._preprocessor.detect_and_align(image)
+        except MultipleFacesDetected:
+            return "MULTIPLE_FACES"
         except ValueError:
             return "NO_FACE"
-        return "BLURRY" if sharpness < BLUR_MIN_SHARPNESS else "VALID"
+        return _evaluate_face_quality(detection)
 
     def embed_poses(self, captures: list[tuple[str, np.ndarray]]) -> tuple[list[np.ndarray], list[dict]]:
         """Multi-pose enrollment: one embedding per VALID capture, plus a per-pose report.
 
-        Each capture goes through the existing MTCNN detection + alignment; it is rejected only when no face is found
-        or the aligned crop is blurry. Valid ones are embedded by the unchanged FaceNet model (the same call
-        authentication makes). Returns (embeddings of the valid poses, [{"pose", "status"}, ...] for every capture).
+        Each capture goes through the existing MTCNN detection + alignment and the same quality
+        gates `check_capture` applies (no face, more than one face, blurry, too small, off-center,
+        too angled, or low detection confidence all reject a capture before it is embedded - see
+        `_evaluate_face_quality` and `preprocessing/face.py` for how each threshold was measured).
+        Valid ones are embedded by the unchanged FaceNet model (the same call authentication
+        makes). Returns (embeddings of the valid poses, [{"pose", "status"}, ...] for every capture).
         """
         embeddings: list[np.ndarray] = []
         report: list[dict] = []
         for pose, image in captures:
             try:
-                aligned, _, sharpness = self._preprocessor.detect_and_align(image)
+                detection = self._preprocessor.detect_and_align(image)
+            except MultipleFacesDetected:
+                report.append({"pose": pose, "status": "MULTIPLE_FACES"})
+                continue
             except ValueError:
                 report.append({"pose": pose, "status": "NO_FACE"})
                 continue
-            if sharpness < BLUR_MIN_SHARPNESS:
-                report.append({"pose": pose, "status": "BLURRY"})
+            verdict = _evaluate_face_quality(detection)
+            if verdict != "VALID":
+                report.append({"pose": pose, "status": verdict})
                 continue
-            embeddings.append(self._embedder.extract_embedding(aligned))
+            embeddings.append(self._embedder.extract_embedding(detection.aligned))
             report.append({"pose": pose, "status": "VALID"})
         return embeddings, report
 

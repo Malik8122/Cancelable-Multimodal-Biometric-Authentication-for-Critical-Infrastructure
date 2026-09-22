@@ -304,8 +304,8 @@ export function RegisterPage() {
       <div className="space-y-4">
         <EnrollmentCard
           modality="face"
-          title="Face Enrollment"
-          blurb="One-time guided enrollment: five poses - front, left, right, slightly up, slightly down."
+          title="Face Registration"
+          blurb="One-time guided enrollment: five full-face captures, all facing the camera."
           status={statuses.face}
           highlighted={focus === 'face'}
           ready={FACE_POSE_ORDER.every((pose) => facePoses[pose])}

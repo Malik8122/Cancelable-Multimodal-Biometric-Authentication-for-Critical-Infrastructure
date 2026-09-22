@@ -16,6 +16,26 @@ HTTP; it only combines numbers it's handed.
 from __future__ import annotations
 
 
+def resolve_normalized_weights(scores: dict[str, float], weights: dict[str, float] | None = None) -> dict[str, float]:
+    """The exact per-modality weight fraction `fuse_scores` applies for this `scores`/`weights` pair.
+
+    Same renormalization rules `fuse_scores` documents: each present modality defaults to `1.0`,
+    a weight for a modality absent from `scores` is ignored, and the result always sums to `1.0`
+    over `scores`'s keys. `fuse_scores` is built on this directly (see below), so the two can
+    never drift apart - this exists so a caller that wants to *report* which weights were
+    actually used (e.g. diagnostics) reads them from here rather than recomputing or guessing.
+    """
+    if not scores:
+        raise ValueError("resolve_normalized_weights requires at least one modality score.")
+
+    weights = weights or {}
+    resolved = {modality: weights.get(modality, 1.0) for modality in scores}
+    total_weight = sum(resolved.values())
+    if total_weight <= 0:
+        raise ValueError("The sum of weights for the supplied modalities must be positive.")
+    return {modality: weight / total_weight for modality, weight in resolved.items()}
+
+
 def fuse_scores(scores: dict[str, float], weights: dict[str, float] | None = None) -> float:
     """Weighted average of `scores`, renormalized over whichever modalities are present.
 
@@ -37,14 +57,5 @@ def fuse_scores(scores: dict[str, float], weights: dict[str, float] | None = Non
     Example: `fuse_scores({"face": 0.90, "fingerprint": 0.70, "voice": 0.95})`
     with equal weights returns `(0.90 + 0.70 + 0.95) / 3`.
     """
-    if not scores:
-        raise ValueError("fuse_scores requires at least one modality score.")
-
-    weights = weights or {}
-    resolved_weights = {modality: weights.get(modality, 1.0) for modality in scores}
-    total_weight = sum(resolved_weights.values())
-    if total_weight <= 0:
-        raise ValueError("The sum of weights for the supplied modalities must be positive.")
-
-    weighted_sum = sum(scores[modality] * resolved_weights[modality] for modality in scores)
-    return weighted_sum / total_weight
+    normalized_weights = resolve_normalized_weights(scores, weights)
+    return sum(scores[modality] * normalized_weights[modality] for modality in scores)
