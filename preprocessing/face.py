@@ -168,6 +168,19 @@ class FacePreprocessor:
         boxes, probs, points = detector.detect(pil_image, landmarks=True)
         if boxes is None or len(boxes) == 0:
             raise ValueError("No face detected in the provided image.")
+
+        # `detect()` returns every candidate that clears MTCNN's internal cascade
+        # thresholds (~0.6-0.7), including low-confidence background clutter (wall
+        # decor, ceiling fixtures, shadows) well below the MIN_DETECTION_CONFIDENCE
+        # bar a real, in-frame face clears. Filter to confident detections before
+        # counting, so background noise isn't mistaken for a second face.
+        confident = probs >= MIN_DETECTION_CONFIDENCE
+        if confident.any():
+            boxes, probs, points = boxes[confident], probs[confident], points[confident]
+        else:
+            best = int(np.argmax(probs))
+            boxes, probs, points = boxes[best : best + 1], probs[best : best + 1], points[best : best + 1]
+
         if len(boxes) > 1:
             raise MultipleFacesDetected(len(boxes))
 
