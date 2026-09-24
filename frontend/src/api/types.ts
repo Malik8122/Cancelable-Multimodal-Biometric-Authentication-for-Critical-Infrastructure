@@ -95,12 +95,42 @@ export interface AuthenticationDecision {
   authentication_time_ms: number
   /** The facility label of the session (context only). */
   building_id?: string
+  /** The user's human-readable name - sent only with ACCESS_GRANTED. */
+  display_name?: string
+  /**
+   * Per-modality results - present only when the backend runs with DEBUG_SCORES=true
+   * (backend/services/authentication.py::to_public_response). Never an embedding, template or key.
+   */
+  results?: Partial<Record<Modality, ModalityAuthenticationResult>>
   /**
    * Local-development observability only - present exclusively when the backend runs with
    * DEBUG_SCORES=true (see backend/services/authentication.py::to_public_response and
    * fusion/diagnostics.py::build_fusion_diagnostics). Absent in production responses.
    */
   fusion_diagnostics?: FusionDiagnostics
+}
+
+/**
+ * Face: 'cosine_estimate' (higher = better). Voice: 'euclidean_estimate' (LOWER = better). Both are calibrated
+ * ESTIMATES derived from the template Hamming comparison (template_protection/metric_estimation.py), not exact
+ * embedding metrics. Other modalities: 'hamming'.
+ */
+export type ModalityMetric = 'cosine_estimate' | 'euclidean_estimate' | 'hamming'
+
+export interface ModalityAuthenticationResult {
+  /** Fusion-scale score (estimated cosine, higher = better) and its threshold. */
+  score: number
+  threshold: number
+  authenticated: boolean
+  metric: ModalityMetric
+  metric_value: number
+  metric_threshold: number
+  metric_higher_is_better: boolean
+  metric_uncertainty: number
+  /** The cancelable-template comparison itself. */
+  hamming_similarity: number
+  hamming_distance_bits: number
+  template_bits: number
 }
 
 export type FusionModalityStatus = 'verified' | 'failed_below_threshold' | 'not_presented'
@@ -158,6 +188,14 @@ export interface EnrollmentStatusResponse {
   application_id: string
   modalities: Partial<Record<Modality, boolean>>
   statuses: Partial<Record<Modality, EnrollmentStatus>>
+  /** The stored name, or the "User <short id>" fallback when has_display_name is false. */
+  display_name: string
+  has_display_name: boolean
+}
+
+export interface UserProfileResponse {
+  user_id: string
+  display_name: string
 }
 
 export type AuthenticateResponse = AuthenticationDecision

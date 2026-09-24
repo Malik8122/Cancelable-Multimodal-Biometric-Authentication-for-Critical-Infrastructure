@@ -4,6 +4,7 @@ import type { Modality, SystemHealthResponse } from '../api/types'
 
 const USER_ID_KEY = 'biometric-demo.user-id'
 const KNOWN_USERS_KEY = 'biometric-demo.known-users'
+const USER_NAMES_KEY = 'biometric-demo.user-names'
 const LOG_KEY = 'biometric-demo.performance-log'
 
 // A local, per-browser demo identity - not a real account system. Lets the
@@ -40,6 +41,17 @@ function loadKnownUsers(currentUserId: string): string[] {
   }
 }
 
+// Display names seen for the roster's ids (a local cache for the "Registered User" picker; the backend's
+// GET /user/{id}/enrollment-status is the source of truth).
+function loadUserNames(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(USER_NAMES_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {}
+  } catch {
+    return {}
+  }
+}
+
 export interface PerformanceLogEntry {
   id: string
   timestamp: string
@@ -71,6 +83,7 @@ function loadLog(): PerformanceLogEntry[] {
 export function useAuthSession() {
   const [userId, setUserId] = useState(loadOrCreateUserId)
   const [knownUsers, setKnownUsers] = useState<string[]>(() => loadKnownUsers(userId))
+  const [userNames, setUserNames] = useState<Record<string, string>>(loadUserNames)
   const [log, setLog] = useState<PerformanceLogEntry[]>(loadLog)
   const [health, setHealth] = useState<SystemHealthResponse | null>(null)
   const [healthChecked, setHealthChecked] = useState(false)
@@ -121,27 +134,39 @@ export function useAuthSession() {
     })
   }, [])
 
-  // "+ New Registration": a brand-new, distinct user_id for a different person to enroll under -
-  // added to the local roster and made active, but every existing id (and its enrollment) in
-  // `knownUsers` is left completely untouched. Returns the new id so the caller can navigate to
-  // the registration flow for it.
-  const registerNewUser = useCallback(() => {
-    const created = createUserId()
-    setUserId(created)
-    localStorage.setItem(USER_ID_KEY, created)
-    setKnownUsers((prev) => {
-      const next = [...prev, created]
-      localStorage.setItem(KNOWN_USERS_KEY, JSON.stringify(next))
+  const rememberName = useCallback((id: string, name: string) => {
+    setUserNames((prev) => {
+      if (prev[id] === name) return prev
+      const next = { ...prev, [id]: name }
+      localStorage.setItem(USER_NAMES_KEY, JSON.stringify(next))
       return next
     })
-    return created
   }, [])
+
+  // A registration just created a named user on the backend (POST /users, which generates the internal id): add it
+  // to the local roster and make it active. `replaceId` drops an unused placeholder id (nothing enrolled, no name)
+  // from the roster; every other known user and their enrollment is left untouched.
+  const addRegisteredUser = useCallback(
+    (id: string, name: string, replaceId?: string) => {
+      setUserId(id)
+      localStorage.setItem(USER_ID_KEY, id)
+      setKnownUsers((prev) => {
+        const next = [...prev.filter((known) => known !== replaceId && known !== id), id]
+        localStorage.setItem(KNOWN_USERS_KEY, JSON.stringify(next))
+        return next
+      })
+      rememberName(id, name)
+    },
+    [rememberName],
+  )
 
   return {
     userId,
     knownUsers,
     switchUser,
-    registerNewUser,
+    userNames,
+    rememberName,
+    addRegisteredUser,
     log,
     recordAttempt,
     clearLog,

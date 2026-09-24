@@ -45,7 +45,7 @@ def test_debug_scores_true_logs_face_debug_on_authentication(client, caplog):
     # The logged Hamming value must be the exact same one the real response carries (the log line
     # rounds to 4 decimal places, so compare with a tolerance matching that rounding).
     logged_value = float(re.search(r"protected_hamming_similarity:\s*(-?\d+\.\d+)", auth_message).group(1))
-    assert logged_value == pytest.approx(response.json()["results"]["face"]["score"], abs=5e-5)
+    assert logged_value == pytest.approx(response.json()["results"]["face"]["hamming_similarity"], abs=5e-5)
 
 
 def test_debug_scores_false_produces_no_face_debug_logging(client, monkeypatch, caplog):

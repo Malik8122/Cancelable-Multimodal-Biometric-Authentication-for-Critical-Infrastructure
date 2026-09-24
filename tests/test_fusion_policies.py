@@ -82,14 +82,14 @@ def test_at_least_two_fails_with_only_one_of_three_matches():
 def test_weighted_still_vetoes_on_a_score_below_the_floor():
     """The old bug's exact numbers, under WEIGHTED: averaging alone would
     pass, but a score below the floor must veto regardless."""
-    scores = {"face": 1.0, "fingerprint": 0.3}  # 0.3 is below DEFAULT_WEIGHTED_FLOOR (0.5)
+    scores = {"face": 1.0, "fingerprint": -0.1}  # -0.1 is below DEFAULT_WEIGHTED_FLOOR (0.0, chance on the cosine scale)
     individually_authenticated = {"face": True, "fingerprint": False}
 
     decision = evaluate_fusion_policy(
-        scores, individually_authenticated, FusionPolicy.WEIGHTED, fusion_threshold=0.6, weighted_floor=DEFAULT_WEIGHTED_FLOOR
+        scores, individually_authenticated, FusionPolicy.WEIGHTED, fusion_threshold=0.4, weighted_floor=DEFAULT_WEIGHTED_FLOOR
     )
 
-    assert decision.fused_score == pytest.approx(0.65)  # clears fusion_threshold=0.6 on average alone
+    assert decision.fused_score == pytest.approx(0.45)  # clears fusion_threshold=0.4 on average alone
     assert decision.authenticated is False  # but the floor veto still blocks it
 
 

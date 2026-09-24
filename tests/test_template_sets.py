@@ -25,6 +25,7 @@ PUBLIC_KEYS = {
     "status", "authentication_state", "fusion_distance", "active_template_set",
     "user_id", "authenticated", "fusion_similarity", "fusion_threshold", "fusion_policy", "matched_modalities",
     "modalities_used", "template_set_version", "key_version", "authentication_time_ms",
+    "display_name",  # the user's name - present because these requests are granted
 }
 FORBIDDEN_KEYS = {
     "score", "threshold", "distance", "results", "fused_score", "failed_modalities", "modality",

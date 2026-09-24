@@ -1,8 +1,8 @@
 import { motion } from 'motion/react'
-import { AlertCircle, Check, Fingerprint, Loader2, Mic, ScanFace } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { AlertCircle, Check, Fingerprint, Loader2, Mic, ScanFace, UserRound } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { enroll, enrollFace } from '../api/client'
+import { createUser, enroll, enrollFace, setDisplayName } from '../api/client'
 import { ApiError, type EnrollResponse, type EnrollmentStatus, type FacePose, type RecordingQuality } from '../api/types'
 import { EnrollmentStatusPill } from '../components/biometric/EnrollmentStatusPill'
 import { FAIR_MESSAGE, POOR_MESSAGE, RecordingQualityPanel } from '../components/biometric/RecordingQualityPanel'
@@ -36,6 +36,85 @@ interface QualityNotice {
 }
 
 const ICON: Record<CardModality, typeof ScanFace> = { face: ScanFace, fingerprint: Fingerprint, voice: Mic }
+
+// Mirrors backend/display_names.py (the backend re-validates; this only gives instant feedback).
+const MAX_NAME_LENGTH = 64
+const normalizeName = (raw: string) => raw.trim().split(/\s+/).join(' ')
+function validateName(raw: string): string | null {
+  const name = normalizeName(raw)
+  if (!name) return 'Please enter your name.'
+  if (name.length > MAX_NAME_LENGTH) return `The name must be at most ${MAX_NAME_LENGTH} characters.`
+  if (!/^\p{L}/u.test(name)) return 'The name must start with a letter.'
+  if (!/^[\p{L} '\u2019.-]+$/u.test(name)) return 'The name may only contain letters, spaces, apostrophes, hyphens and periods.'
+  return null
+}
+
+// Step 1. A new registration creates the backend user here (POST /users generates the internal id - the name is only
+// a label, so two people may share one). A user registered before names existed can name their account the same way.
+function NameStep({ mode, onSaved }: { mode: 'new' | 'legacy'; onSaved: (name: string) => Promise<void> }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const problem = validateName(name)
+    if (problem) {
+      setError(problem)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await onSaved(normalizeName(name))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : 'The backend is unreachable.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded-2xl border border-primary/50 bg-card/60 p-5 backdrop-blur-xl">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
+          <UserRound className="h-5 w-5 text-primary" strokeWidth={1.5} />
+        </div>
+        <div>
+          <h2 className="text-base font-medium text-foreground">Step 1 — Your Name</h2>
+          <p className="text-xs text-muted-foreground">
+            {mode === 'new'
+              ? 'Enter the name to show for this person. It is only a label - it is never part of the biometric template.'
+              : 'This account was registered before names were added. Give it a name so it is easy to recognise.'}
+          </p>
+        </div>
+      </div>
+      <label htmlFor="display-name" className="mb-1.5 block text-xs font-medium text-muted-foreground">
+        Full Name
+      </label>
+      <input
+        id="display-name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoComplete="name"
+        placeholder="e.g. Sanya Malik"
+        className="w-full rounded-lg border border-border bg-background/60 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60"
+      />
+      {error && (
+        <p className="mt-2 flex items-start gap-2 text-xs text-danger">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.5} /> {error}
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={busy}
+        className="mt-4 w-full rounded-xl bg-primary py-3 text-sm font-medium text-primary-foreground shadow-lg shadow-black/20 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        {busy ? 'Saving…' : mode === 'new' ? 'Continue to Face Capture' : 'Save Name'}
+      </button>
+    </form>
+  )
+}
 
 const describeEnrollment = (r: EnrollResponse) =>
   `${r.templates_created} template sets generated - Set ${r.active_template_set_version} is active.`
@@ -260,13 +339,33 @@ function EnrollmentCard({
 
 export function RegisterPage() {
   const { buildingId } = useParams<{ buildingId: string }>()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const focus = searchParams.get('focus')
-  const { userId, health } = useSession()
+  const startNew = searchParams.get('new') === '1'
+  const { userId, health, addRegisteredUser, rememberName } = useSession()
   const { getBuilding } = useBuildings()
   const building = buildingId ? getBuilding(buildingId) : undefined
   const poolSize = health?.template_pool_size ?? 4
-  const { statuses, enrolledList, error: loadError, refresh } = useEnrollmentProfile(userId)
+  const { statuses, enrolledList, displayName, hasDisplayName, loading, error: loadError, refresh } = useEnrollmentProfile(userId)
+
+  // A new registration must start with a name. The current id counts as "not registered yet" when it has neither a
+  // name nor any enrollment (the placeholder id a first visit gets); it is then replaced by the new backend user.
+  const unregistered = !loading && !loadError && !hasDisplayName && enrolledList.length === 0
+  const needsName = startNew || unregistered
+  const legacyUnnamed = !startNew && !loading && !loadError && !hasDisplayName && enrolledList.length > 0
+  const isEnrolled = (s: EnrollmentStatus | undefined) => s === 'REGISTERED' || s === 'UPDATED'
+  const registrationComplete = !needsName && isEnrolled(statuses.face) && isEnrolled(statuses.voice)
+
+  const registerName = async (name: string) => {
+    const created = await createUser(name)
+    addRegisteredUser(created.user_id, created.display_name, unregistered ? userId : undefined)
+    setSearchParams({}, { replace: true })
+  }
+  const nameExistingUser = async (name: string) => {
+    const saved = await setDisplayName(userId, name)
+    rememberName(saved.user_id, saved.display_name)
+    await refresh()
+  }
 
   const [facePoses, setFacePoses] = useState<Partial<Record<FacePose, Blob>>>({})
   const [fingerprint, setFingerprint] = useState<Sample | null>(null)
@@ -289,11 +388,31 @@ export function RegisterPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 pt-6 pb-14">
       {building && <p className="mb-2 text-center text-xs font-medium tracking-wide text-muted-foreground">{building.name}</p>}
-      <h1 className="mb-2 text-center text-2xl font-semibold tracking-tight text-foreground">Biometric Enrollment</h1>
+      <h1 className="mb-2 text-center text-2xl font-semibold tracking-tight text-foreground">
+        {needsName ? 'Register New User' : 'Biometric Enrollment'}
+      </h1>
       <p className="mx-auto mb-8 max-w-xl text-center text-sm text-muted-foreground">
-        Enroll any combination of biometrics, independently and in any order. You choose which registered factors to use each
-        time you authenticate.
+        {needsName
+          ? 'Enter your name, capture your face, record your voice - then you are registered.'
+          : `Registering ${displayName ?? '...'}. Capture your face, then record your voice. Fingerprint is optional. You choose which registered factors to use each time you authenticate.`}
       </p>
+
+      {registrationComplete && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 rounded-2xl border border-success/30 bg-success/10 p-5 text-center"
+        >
+          <p className="flex items-center justify-center gap-2 text-base font-medium text-success">
+            <Check className="h-5 w-5" strokeWidth={2} /> Registration Successful
+          </p>
+          <p className="mt-1 text-sm text-foreground">Welcome, {displayName}.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your face and voice biometric templates have been securely enrolled. Only protected, cancelable templates are
+            stored - never your images or recordings.
+          </p>
+        </motion.div>
+      )}
 
       {loadError && (
         <p className="mb-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
@@ -301,85 +420,95 @@ export function RegisterPage() {
         </p>
       )}
 
-      <div className="space-y-4">
-        <EnrollmentCard
-          modality="face"
-          title="Face Registration"
-          blurb="One-time guided enrollment: five full-face captures, all facing the camera."
-          status={statuses.face}
-          highlighted={focus === 'face'}
-          ready={FACE_POSE_ORDER.every((pose) => facePoses[pose])}
-          poolSize={poolSize}
-          resetKey={resetKey}
-          onDone={done}
-          onFailed={() => {
-            setFacePoses({})
-            setResetKey((k) => k + 1)
-            void refresh()
-          }}
-          onSubmit={async () => {
-            // All five poses go in ONE request. The backend averages the valid embeddings into a centroid, discards them and
-            // generates T1-T4 from the centroid alone; only the protected templates are stored.
-            const response = await enrollFace(userId, APPLICATION_ID, facePoses as Record<FacePose, Blob>)
-            return { message: `${describeEnrollment(response)} Enrolled from ${response.poses_valid ?? 5} guided poses.` }
-          }}
-        >
-          <GuidedFaceCapture onChange={setFacePoses} />
-        </EnrollmentCard>
+      {needsName ? (
+        loading ? (
+          <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} /> Loading&hellip;
+          </p>
+        ) : (
+          <NameStep mode="new" onSaved={registerName} />
+        )
+      ) : (
+        <div className="space-y-4">
+          {legacyUnnamed && <NameStep mode="legacy" onSaved={nameExistingUser} />}
+          <EnrollmentCard
+            modality="face"
+            title="Step 2 — Face Capture"
+            blurb="One-time guided enrollment: five full-face captures, all facing the camera."
+            status={statuses.face}
+            highlighted={focus === 'face'}
+            ready={FACE_POSE_ORDER.every((pose) => facePoses[pose])}
+            poolSize={poolSize}
+            resetKey={resetKey}
+            onDone={done}
+            onFailed={() => {
+              setFacePoses({})
+              setResetKey((k) => k + 1)
+              void refresh()
+            }}
+            onSubmit={async () => {
+              // All five poses go in ONE request. The backend averages the valid embeddings into a centroid, discards them and
+              // generates T1-T4 from the centroid alone; only the protected templates are stored.
+              const response = await enrollFace(userId, APPLICATION_ID, facePoses as Record<FacePose, Blob>)
+              return { message: `${describeEnrollment(response)} Enrolled from ${response.poses_valid ?? 5} guided poses.` }
+            }}
+          >
+            <GuidedFaceCapture onChange={setFacePoses} />
+          </EnrollmentCard>
 
-        <EnrollmentCard
-          modality="fingerprint"
-          title="Fingerprint Enrollment"
-          blurb="Upload a fingerprint image - PNG, JPG or JPEG. A high-resolution grayscale scan works best."
-          status={statuses.fingerprint}
-          highlighted={focus === 'fingerprint'}
-          ready={!!fingerprint}
-          poolSize={poolSize}
-          resetKey={resetKey}
-          onDone={done}
-          onFailed={() => {
-            setFingerprint(null)
-            setResetKey((k) => k + 1)
-            void refresh()
-          }}
-          onSubmit={async () => ({
-            message: describeEnrollment(await enroll('fingerprint', userId, APPLICATION_ID, fingerprint!.blob, fingerprint!.filename)),
-          })}
-        >
-          <FingerprintCapture mode="register" onCapture={(blob, filename) => setFingerprint({ blob, filename })} />
-        </EnrollmentCard>
-
-        <EnrollmentCard
-          modality="voice"
-          title="Voice Enrollment"
-          blurb="Record the phrase twice, 4-5 seconds each. We check how well the two recordings match."
-          status={statuses.voice}
-          highlighted={focus === 'voice'}
-          ready={!!voiceOne && !!voiceTwo}
-          poolSize={poolSize}
-          resetKey={resetKey}
-          onDone={done}
-          onFailed={() => {
-            clearVoice()
-            void refresh()
-          }}
-          onSubmit={async (acceptLowQuality) => {
-            // ONE atomic request. The backend compares the two recordings (ECAPA embedding cosine similarity) BEFORE
-            // storing anything: Excellent / Good -> enrolled; Fair -> 409 LOW_QUALITY_WARNING (stored only if the user
-            // continues); Poor -> 422 ENROLLMENT_INCONSISTENT (nothing stored).
-            const response = await enroll('voice', userId, APPLICATION_ID, voiceOne!.blob, voiceOne!.filename, {
-              confirm: { sample: voiceTwo!.blob, filename: voiceTwo!.filename },
-              acceptLowQuality,
-            })
-            return { message: describeEnrollment(response), quality: response.recording_quality }
-          }}
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <VoiceCapture mode="register" title="Recording 1 of 2" onCapture={(blob, filename) => setVoiceOne({ blob, filename })} />
-            <VoiceCapture mode="register" title="Recording 2 of 2" onCapture={(blob, filename) => setVoiceTwo({ blob, filename })} />
-          </div>
-        </EnrollmentCard>
-      </div>
+          <EnrollmentCard
+            modality="voice"
+            title="Step 3 — Voice Capture"
+            blurb="Record the phrase twice, 4-5 seconds each. We check how well the two recordings match."
+            status={statuses.voice}
+            highlighted={focus === 'voice'}
+            ready={!!voiceOne && !!voiceTwo}
+            poolSize={poolSize}
+            resetKey={resetKey}
+            onDone={done}
+            onFailed={() => {
+              clearVoice()
+              void refresh()
+            }}
+            onSubmit={async (acceptLowQuality) => {
+              // ONE atomic request. The backend compares the two recordings (ECAPA embedding cosine similarity) BEFORE
+              // storing anything: Excellent / Good -> enrolled; Fair -> 409 LOW_QUALITY_WARNING (stored only if the user
+              // continues); Poor -> 422 ENROLLMENT_INCONSISTENT (nothing stored).
+              const response = await enroll('voice', userId, APPLICATION_ID, voiceOne!.blob, voiceOne!.filename, {
+                confirm: { sample: voiceTwo!.blob, filename: voiceTwo!.filename },
+                acceptLowQuality,
+              })
+              return { message: describeEnrollment(response), quality: response.recording_quality }
+            }}
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <VoiceCapture mode="register" title="Recording 1 of 2" onCapture={(blob, filename) => setVoiceOne({ blob, filename })} />
+              <VoiceCapture mode="register" title="Recording 2 of 2" onCapture={(blob, filename) => setVoiceTwo({ blob, filename })} />
+            </div>
+          </EnrollmentCard>
+          <EnrollmentCard
+            modality="fingerprint"
+            title="Optional — Fingerprint"
+            blurb="Upload a fingerprint image - PNG, JPG or JPEG. A high-resolution grayscale scan works best."
+            status={statuses.fingerprint}
+            highlighted={focus === 'fingerprint'}
+            ready={!!fingerprint}
+            poolSize={poolSize}
+            resetKey={resetKey}
+            onDone={done}
+            onFailed={() => {
+              setFingerprint(null)
+              setResetKey((k) => k + 1)
+              void refresh()
+            }}
+            onSubmit={async () => ({
+              message: describeEnrollment(await enroll('fingerprint', userId, APPLICATION_ID, fingerprint!.blob, fingerprint!.filename)),
+            })}
+          >
+            <FingerprintCapture mode="register" onCapture={(blob, filename) => setFingerprint({ blob, filename })} />
+          </EnrollmentCard>
+        </div>
+      )}
 
       {building && enrolledList.length > 0 && (
         <div className="mt-8 text-center">

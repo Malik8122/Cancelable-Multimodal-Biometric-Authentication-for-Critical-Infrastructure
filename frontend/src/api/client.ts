@@ -28,6 +28,7 @@ import type {
   SystemHealthResponse,
   TemplateSetPoolResponse,
   UserModalitiesResponse,
+  UserProfileResponse,
 } from './types'
 import { ApiError } from './types'
 
@@ -173,6 +174,25 @@ export async function getEnrollmentStatus(userId: string, applicationId: string)
   return request<EnrollmentStatusResponse>(
     `/user/${encodeURIComponent(userId)}/enrollment-status?application_id=${encodeURIComponent(applicationId)}`,
   )
+}
+
+// --- Users: internal id + human-readable display name -------------------
+// Registration starts here: the backend generates the internal user_id; the name is only a label.
+export async function createUser(displayName: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>('/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name: displayName }),
+  })
+}
+
+// Name an existing user (e.g. one registered before names existed). Templates are untouched.
+export async function setDisplayName(userId: string, displayName: string): Promise<UserProfileResponse> {
+  return request<UserProfileResponse>(`/user/${encodeURIComponent(userId)}/display-name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name: displayName }),
+  })
 }
 
 // --- Template sets ---------------------------------------------------------

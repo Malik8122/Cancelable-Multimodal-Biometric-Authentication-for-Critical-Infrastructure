@@ -33,6 +33,7 @@ from backend.database.models import (
     ProtectedTemplate,
     User,
 )
+from backend.display_names import fallback_display_name
 
 
 def _now() -> datetime:
@@ -146,6 +147,39 @@ def get_or_create_user(db: Session, user_id: str, username: str | None = None) -
 
 def get_user(db: Session, user_id: str) -> User | None:
     return db.get(User, user_id)
+
+
+def create_named_user(db: Session, display_name: str) -> User:
+    """A new user with a server-generated internal id and an already-validated display name.
+
+    The id (not the name) identifies the user everywhere, so the same name may be registered any number of times.
+    """
+    while True:
+        user_id = f"USER-{uuid4().hex[:12].upper()}"
+        if db.get(User, user_id) is None:
+            break
+    user = User(id=user_id, username=display_name)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def set_display_name(db: Session, user_id: str, display_name: str) -> User | None:
+    """Name (or rename) an existing user - e.g. one enrolled before names existed. None if there is no such user."""
+    user = db.get(User, user_id)
+    if user is None:
+        return None
+    user.username = display_name
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def display_name_for(db: Session, user_id: str) -> str:
+    """The user's display name, or the "User <short id>" fallback when none was stored."""
+    user = db.get(User, user_id)
+    return user.username if user is not None and user.username else fallback_display_name(user_id)
 
 
 # ----------------------------------------------------------------------------- reads

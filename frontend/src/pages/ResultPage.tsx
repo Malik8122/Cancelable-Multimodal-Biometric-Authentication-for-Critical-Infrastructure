@@ -3,6 +3,7 @@ import { UserPlus } from 'lucide-react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import type { AuthenticationOutcome } from '../api/types'
 import { AccessDecisionHero } from '../components/biometric/AccessDecisionHero'
+import { BiometricMetricsPanel } from '../components/biometric/BiometricMetricsPanel'
 import { DecisionSummary } from '../components/biometric/DecisionSummary'
 import { FusionDiagnosticsPanel } from '../components/biometric/FusionDiagnosticsPanel'
 import { MODALITY_LABEL } from '../config/buildings'
@@ -73,7 +74,12 @@ export function ResultPage() {
 
       <AccessDecisionHero authenticated={granted} />
 
+      {granted && result.display_name && (
+        <p className="-mt-4 mb-6 text-center text-lg font-medium text-foreground">Welcome, {result.display_name}</p>
+      )}
+
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: tailDelay }} className="mb-8">
+        <BiometricMetricsPanel result={result} />
         <DecisionSummary result={result} buildingName={building.name} />
       </motion.div>
 

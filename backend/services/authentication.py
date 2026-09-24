@@ -9,7 +9,9 @@ The USER chooses which enrolled modalities to present; buildings only label the 
 3. Fuse across exactly those modalities with the requested `fusion.config.FusionPolicy` (ALL_REQUIRED by default), write
    the audit row (which keeps the per-modality values) and return ONE decision.
 
-Fusion formula (equal weights, m = submitted + enrolled modalities):
+Fusion formula (equal weights, m = submitted + enrolled modalities; s_m and t_m are on the higher-is-better
+estimated-cosine scale of `backend/services/modality_metrics.py` - voice's Euclidean distance d is converted with
+s = 1 - d**2 / 2 first, never averaged as a distance):
 
     fusion_similarity = sum(s_m) / |M|
     fusion_distance   = 1 - fusion_similarity           (computed after fusion only)
@@ -30,6 +32,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.config import Settings
+from backend.database import crud
 from backend.database.models import STATUS_ACTIVE
 from backend.database.schema import AuthenticationDecision, EnrollmentRequiredResponse, ModalityAuthenticationResult
 from backend.security_validation import SecurityValidationError
@@ -65,6 +68,8 @@ class AuthenticationOutcome:
     failed_modalities: list[str] = field(default_factory=list)
     latency_ms: int = 0
     template_set_version: int = 0
+    #: The user's human-readable name (crud.display_name_for) - only ever sent to the client on ACCESS_GRANTED.
+    display_name: str | None = None
 
 
 def release_modality_cache(modality: str) -> None:
@@ -169,6 +174,8 @@ def authenticate_samples(
     outcome.state = ACCESS_GRANTED if decision.authenticated else ACCESS_DENIED
     outcome.matched_modalities = decision.matched_modalities
     outcome.failed_modalities = decision.failed_modalities
+    if outcome.authenticated:
+        outcome.display_name = crud.display_name_for(db, user_id)
     outcome.latency_ms = round((time.perf_counter() - started_at) * 1000)
 
     logger.info(
@@ -234,7 +241,8 @@ def enrollment_required_response(outcome: AuthenticationOutcome) -> JSONResponse
 def to_public_response(outcome: AuthenticationOutcome, settings: Settings) -> AuthenticationDecision:
     """Build the public response: one decision, one fusion similarity, one active template set.
 
-    Per-modality similarities / thresholds / distances are added only under DEBUG_SCORES.
+    The user's display name is added only when access was granted. Per-modality similarities / thresholds /
+    distances are added only under DEBUG_SCORES.
     """
     key_versions = {m: r.key_version for m, r in outcome.per_modality.items()}
     response = AuthenticationDecision(
@@ -253,6 +261,7 @@ def to_public_response(outcome: AuthenticationOutcome, settings: Settings) -> Au
         key_version=max(key_versions.values(), default=0),
         authentication_time_ms=outcome.latency_ms,
         building_id=outcome.building_id,
+        display_name=outcome.display_name if outcome.authenticated else None,
     )
     if settings.debug_scores:
         response.failed_modalities = outcome.failed_modalities
@@ -266,6 +275,14 @@ def to_public_response(outcome: AuthenticationOutcome, settings: Settings) -> Au
                 threshold=r.threshold,
                 authenticated=r.authenticated,
                 distance=r.distance,
+                metric=r.metric,
+                metric_value=r.metric_value,
+                metric_threshold=r.metric_threshold,
+                metric_higher_is_better=r.metric_higher_is_better,
+                metric_uncertainty=r.metric_uncertainty,
+                hamming_similarity=r.hamming_similarity,
+                hamming_distance_bits=r.hamming_distance_bits,
+                template_bits=r.template_bits,
                 template_version=r.template_set_version,
                 key_version=r.key_version,
                 mock_embedder=r.mock_embedder,

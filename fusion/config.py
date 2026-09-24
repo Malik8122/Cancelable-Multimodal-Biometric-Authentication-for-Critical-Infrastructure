@@ -38,12 +38,12 @@ class FusionPolicy(str, Enum):
 DEFAULT_FUSION_POLICY = FusionPolicy.ALL_REQUIRED
 
 #: WEIGHTED mode's per-modality minimum: any present modality scoring below
-#: this vetoes authentication before the average is even considered. 0.5 is
-#: the Hamming-similarity midpoint (statistically-unrelated bit strings
-#: average ~0.5 - see template_protection/biohash.py's non-invertibility
-#: discussion), i.e. "no better than chance" - a conservative floor a real
-#: deployment should tighten once per-modality calibration
-#: (evaluation/threshold_calibration.py) data exists.
-DEFAULT_WEIGHTED_FLOOR = 0.5
+#: this vetoes authentication before the average is even considered. Fusion
+#: scores are on the estimated-cosine scale (backend/services/modality_metrics.py),
+#: where 0.0 means "no better than chance": unrelated embeddings have cosine ~0,
+#: which is the Hamming-similarity midpoint ~0.5 this floor used to be expressed
+#: in. A conservative floor a real deployment should tighten once per-modality
+#: genuine/impostor calibration data exists.
+DEFAULT_WEIGHTED_FLOOR = 0.0
 
 ALL_POLICIES: tuple[str, ...] = tuple(policy.value for policy in FusionPolicy)

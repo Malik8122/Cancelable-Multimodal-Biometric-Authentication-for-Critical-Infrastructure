@@ -150,8 +150,12 @@ never mixed).
 }
 ```
 
-`fusion_similarity` is a Hamming similarity in `[0, 1]` (for one modality, that modality's
-similarity). `template_set_version` is the ACTIVE set that matched; `key_version` the highest
+`fusion_similarity` is the mean of the per-modality scores on the estimated-cosine scale
+(higher = better; for one modality, that modality's score) - see
+[BIOMETRIC_METRICS.md](BIOMETRIC_METRICS.md): face is decided on an estimated cosine similarity
+(>= 0.80), voice on an estimated Euclidean distance (<= 0.75, converted to `1 - d^2/2` before
+fusion), both derived from the 256-bit template Hamming comparison. `display_name` (the user's
+human-readable name) is included **only** when access is granted. `template_set_version` is the ACTIVE set that matched; `key_version` the highest
 HKDF key version among its templates. **Per-modality similarities, per-modality thresholds,
 distances (`fusion_distance` included), `results` and `fused_score` are not returned** unless the
 server runs with `DEBUG_SCORES=true`; they are always written to the audit log. If nothing is
@@ -242,6 +246,24 @@ set (every modality of the ACTIVE set) built from those same captures, under fre
 active_template_set_version}`. (`/templates/{user_id}/replenish` remains as a hidden alias.)
 This is also how a migrated user with a pool of one set gets standby sets.
 
+## Users and display names
+
+A display name is only a label; the internal `user_id` stays the identifier (primary key, key-derivation input, what
+templates attach to), so two users may share a name. Stored in `users.username`; users registered before names existed
+have none and are shown as `User <last 6 id characters>`. Validation (`backend/display_names.py`): trimmed, inner
+whitespace collapsed to one space, 1-64 characters, letters (any script), spaces and `' ’ - .`, starting with a letter.
+
+### `POST /users`
+
+Starts a registration. Body `{"display_name": "Sanya Malik"}` -> `201`
+`{"user_id": "USER-3F9A1C0B7D2E", "display_name": "Sanya Malik"}` (the id is server-generated). Invalid name -> `422`.
+The face / voice samples are then enrolled under the returned `user_id` with `/enroll/face` and `/enroll`.
+
+### `POST /user/{user_id}/display-name`
+
+Names or renames an existing user (e.g. one registered before names existed). Same body and response; `404` for an
+unknown user, `422` for an invalid name. Templates are not touched.
+
 ## Enrollment profile and buildings
 
 ### `GET /user/{user_id}/enrollment-status`
@@ -252,8 +274,11 @@ simply has nothing registered):
 ```json
 {"user_id": "USER001", "application_id": "capstone-demo",
  "modalities": {"face": true, "fingerprint": false, "voice": false},
- "statuses": {"face": "REGISTERED", "fingerprint": "NOT_REGISTERED", "voice": "RETRY_REQUIRED"}}
+ "statuses": {"face": "REGISTERED", "fingerprint": "NOT_REGISTERED", "voice": "RETRY_REQUIRED"},
+ "display_name": "Sanya Malik", "has_display_name": true}
 ```
+
+`display_name` is the fallback `User <short id>` when `has_display_name` is `false`.
 
 `statuses`: `NOT_REGISTERED`, `REGISTERED`, `UPDATED` (re-enrolled), `RETRY_REQUIRED` (voice only - the last enrollment failed the
 two-recording check; nothing was stored).
@@ -333,7 +358,9 @@ Every error body is `{"detail": "<message>"}` (FastAPI's default).
 See `.env.example` for the full list of environment variables
 (`MASTER_SECRET`, `DATABASE_URL`, `APPLICATION_ID`,
 `FACE_MODEL_PATH`/`IRIS_MODEL_PATH`/`FINGERPRINT_MODEL_PATH`,
-`TEMPLATE_BITS`, `MATCH_THRESHOLD`) and `backend/config.py` for what each one
+`TEMPLATE_BITS`, `MATCH_THRESHOLD`, `FACE_COSINE_THRESHOLD` (default `0.80`, estimated cosine,
+higher = better), `VOICE_EUCLIDEAN_THRESHOLD` (default `0.75`, estimated Euclidean distance,
+lower = better)) and `backend/config.py` for what each one
 does and its default. `MASTER_SECRET` has no default and must be set - the
 server fails to start without it, by design.
 

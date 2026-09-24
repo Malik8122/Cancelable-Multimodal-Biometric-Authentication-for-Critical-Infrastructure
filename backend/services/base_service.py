@@ -27,15 +27,15 @@ from backend.config import Settings
 from backend.database import crud
 from backend.database.models import ProtectedTemplate
 from backend.security_validation import assert_valid, validate_authentication
+from backend.services import modality_metrics
 from backend.services.face_debug import log_authentication_diagnostics, log_enrollment_pose_diagnostics
 from backend.services.face_enrollment import MIN_VALID_POSES, FaceCaptureRejected
 from backend.services.recording_quality import FAIR, FAIR_MESSAGE, POOR, POOR_MESSAGE, classify, cosine_similarity
-from backend.threshold_loader import get_modality_threshold
 from embeddings.centroid import centroid_embedding
 from embeddings.pipelines import ModalityPipeline
 from template_protection.biohash import TEMPLATE_FORMAT_VERSION, generate_template
 from template_protection.hkdf_keys import derive_key
-from template_protection.matcher import accept, compare
+from template_protection.matcher import compare
 from template_protection.utils import pack_bits, unpack_bits
 
 logger = logging.getLogger("backend.services.base_service")
@@ -43,12 +43,25 @@ logger = logging.getLogger("backend.services.base_service")
 
 @dataclass(frozen=True)
 class AuthenticationResult:
+    #: Higher-is-better score on the fusion scale (estimated cosine for face/voice/fingerprint - see
+    #: `backend/services/modality_metrics.py`), and the threshold on that same scale. INTERNAL: per-modality values
+    #: never leave the backend unless `Settings.debug_scores` is on (they are always audit-logged).
     score: float
     threshold: float
     authenticated: bool
-    #: 1 - score. INTERNAL: per-modality values never leave the backend unless
-    #: `Settings.debug_scores` is on (they are always audit-logged).
+    #: Normalized template Hamming distance (1 - hamming_similarity).
     distance: float = 0.0
+    #: The raw template comparison: fraction of agreeing bits, and the number of differing bits out of `template_bits`.
+    hamming_similarity: float = 0.0
+    hamming_distance_bits: int = 0
+    template_bits: int = 0
+    #: The modality's decision metric (modality_metrics.COSINE_ESTIMATE / EUCLIDEAN_ESTIMATE / HAMMING), its value and
+    #: threshold in that metric's own units, its direction and its calibrated standard deviation.
+    metric: str = ""
+    metric_value: float = 0.0
+    metric_threshold: float = 0.0
+    metric_higher_is_better: bool = True
+    metric_uncertainty: float = 0.0
     #: BioHash format version of the stored template (0 when nothing is enrolled).
     template_version: int = 0
     key_version: int = 0
@@ -237,12 +250,10 @@ class ModalityService:
 
         STANDBY and REVOKED sets are never read. Returns `score=0.0,
         authenticated=False` (rather than raising) when nothing is enrolled.
-        The threshold is per-modality from real calibration data when present
-        (`backend/threshold_loader.py`), else `Settings.match_threshold`.
+        The decision rule per modality is `backend/services/modality_metrics.py`.
         """
-        threshold = get_modality_threshold(self.modality, self.settings.match_threshold)
         if crud.get_active_template(db, user_id, self.modality, application_id) is None:
-            return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)
+            return self._not_enrolled()
         embedding = self.embed(raw_image)
         try:
             return self.authenticate_embedding(db, embedding, user_id, application_id)
@@ -253,10 +264,9 @@ class ModalityService:
         self, db: Session, embedding: np.ndarray, user_id: str, application_id: str
     ) -> AuthenticationResult:
         """Compare an already-computed embedding with the ACTIVE set's template for this modality."""
-        threshold = get_modality_threshold(self.modality, self.settings.match_threshold)
         stored = crud.get_active_template(db, user_id, self.modality, application_id)
         if stored is None:
-            return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)
+            return self._not_enrolled()
 
         key = derive_key(
             self.settings.master_secret,
@@ -280,16 +290,19 @@ class ModalityService:
             user_id=user_id,
         )
 
-        score = compare(candidate_template, stored_template, metric="hamming")
-        authenticated = accept(score, threshold=threshold, metric="hamming")
+        # The template comparison: Hamming similarity of the two cancelable templates (1.0 = identical).
+        hamming_similarity = compare(candidate_template, stored_template, metric="hamming")
+        decision = modality_metrics.decide(self.modality, hamming_similarity, stored.output_bits, self.settings)
+        authenticated = decision.matched
         if self.settings.debug_scores:
             # DEBUG ONLY (DEBUG_SCORES=true): metadata about each stage - never the embedding or template itself.
             norm = float(np.linalg.norm(embedding))
             logger.info(
                 "AUTH-DEBUG modality=%s embedding_dim=%d normalized=%s biohash_bits=%d active_template=(set=%d,key=%d,status=%s) "
-                "hamming=%.4f threshold=%.2f match=%s",
+                "hamming=%.4f metric=%s value=%.4f threshold=%.2f match=%s",
                 self.modality, embedding.shape[0], abs(norm - 1.0) < 1e-3, len(candidate_template),
-                stored.template_set_version, stored.key_version, stored.template_status, score, threshold, authenticated,
+                stored.template_set_version, stored.key_version, stored.template_status, hamming_similarity,
+                decision.metric, decision.value, decision.threshold, authenticated,
             )
             if self.modality == "face":
                 # TEMPORARY (alignment investigation) - see backend/services/face_debug.py's own
@@ -297,15 +310,27 @@ class ModalityService:
                 # than computed: the enrolled raw embedding never exists at this point. This call
                 # happens strictly AFTER `authenticated` above was already decided from `score` -
                 # it cannot influence the real authentication result.
-                log_authentication_diagnostics(score)
+                log_authentication_diagnostics(hamming_similarity)
         return AuthenticationResult(
-            score=score,
-            threshold=threshold,
+            score=decision.fusion_score,
+            threshold=decision.fusion_threshold,
             authenticated=authenticated,
-            distance=1.0 - score,
+            distance=1.0 - hamming_similarity,
+            hamming_similarity=hamming_similarity,
+            hamming_distance_bits=int(np.count_nonzero(candidate_template != stored_template)),
+            template_bits=stored.output_bits,
+            metric=decision.metric,
+            metric_value=decision.value,
+            metric_threshold=decision.threshold,
+            metric_higher_is_better=decision.higher_is_better,
+            metric_uncertainty=decision.uncertainty,
             template_version=stored.template_version,
             key_version=stored.key_version,
             template_set_version=stored.template_set_version,
             mock_embedder=getattr(self.pipeline, "is_mock", False),
             template_status=stored.template_status or "",
         )
+
+    def _not_enrolled(self) -> AuthenticationResult:
+        threshold = modality_metrics.fusion_threshold(self.modality, self.settings.template_bits, self.settings)
+        return AuthenticationResult(score=0.0, threshold=threshold, authenticated=False)

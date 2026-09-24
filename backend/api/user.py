@@ -1,4 +1,5 @@
-"""GET /user/{id}: enrolled modalities. DELETE /user/{id}: delete a user's protected templates."""
+"""POST /users: register a named user. GET /user/{id}: enrolled modalities. POST /user/{id}/display-name: (re)name a
+user. DELETE /user/{id}: delete a user's protected templates."""
 
 from __future__ import annotations
 
@@ -10,17 +11,48 @@ from sqlalchemy.orm import Session
 from backend.config import Settings, get_settings
 from backend.database import crud
 from backend.database.schema import (
+    CreateUserRequest,
     DeleteUserResponse,
     EnrolledModality,
     EnrollmentStatusResponse,
     UserModalitiesResponse,
+    UserProfileResponse,
 )
 from backend.database.session import get_db
+from backend.display_names import InvalidDisplayName, normalize_display_name
 from backend.services import enrollment
 
 logger = logging.getLogger("backend.api.user")
 
 router = APIRouter()
+
+
+def _validated_name(body: CreateUserRequest) -> str:
+    try:
+        return normalize_display_name(body.display_name)
+    except InvalidDisplayName as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+
+@router.post("/users", response_model=UserProfileResponse, status_code=status.HTTP_201_CREATED)
+def create_user(body: CreateUserRequest, db: Session = Depends(get_db)) -> UserProfileResponse:
+    """Start a registration: a new user with a server-generated internal id and the given display name.
+
+    Nothing biometric happens here - the face / voice samples are enrolled afterwards under the returned `user_id`
+    (POST /enroll, /enroll/face). Duplicate names are allowed: every registration gets its own id.
+    """
+    user = crud.create_named_user(db, _validated_name(body))
+    logger.info("Registered user_id=%s", user.id)  # the name is not logged: it is not needed to trace a request
+    return UserProfileResponse(user_id=user.id, display_name=user.username)
+
+
+@router.post("/user/{user_id}/display-name", response_model=UserProfileResponse)
+def update_display_name(user_id: str, body: CreateUserRequest, db: Session = Depends(get_db)) -> UserProfileResponse:
+    """Name or rename an existing user (e.g. one enrolled before names existed). Templates are untouched."""
+    user = crud.set_display_name(db, user_id, _validated_name(body))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No such user: {user_id!r}")
+    return UserProfileResponse(user_id=user.id, display_name=user.username)
 
 
 @router.get("/user/{user_id}", response_model=UserModalitiesResponse)
@@ -54,8 +86,14 @@ def get_enrollment_status(
 ) -> EnrollmentStatusResponse:
     """User Enrollment Profile: which modalities are enrolled. Unknown users simply have none (200)."""
     status_ = enrollment.get_user_enrollment_status(db, user_id, application_id or settings.application_id)
+    user = crud.get_user(db, user_id)
     return EnrollmentStatusResponse(
-        user_id=user_id, application_id=status_.application_id, modalities=status_.modalities, statuses=status_.statuses
+        user_id=user_id,
+        application_id=status_.application_id,
+        modalities=status_.modalities,
+        statuses=status_.statuses,
+        display_name=crud.display_name_for(db, user_id),
+        has_display_name=bool(user is not None and user.username),
     )
 
 

@@ -1,5 +1,6 @@
 import { motion } from 'motion/react'
 import { AlertCircle, Fingerprint, Loader2, Mic, ScanFace } from 'lucide-react'
+import { useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Modality } from '../api/types'
 import { ClearanceBadge } from '../components/biometric/ClearanceBadge'
@@ -16,9 +17,14 @@ const ICON: Partial<Record<Modality, typeof ScanFace>> = { face: ScanFace, finge
 export function CheckpointPage() {
   const { buildingId } = useParams<{ buildingId: string }>()
   const { getBuilding, status: buildingsStatus } = useBuildings()
-  const { userId, knownUsers, switchUser, registerNewUser } = useSession()
+  const { userId, knownUsers, switchUser, userNames, rememberName } = useSession()
   const building = buildingId ? getBuilding(buildingId) : undefined
-  const { statuses, enrolledList, error, loading } = useEnrollmentProfile(userId)
+  const { statuses, enrolledList, displayName, hasDisplayName, error, loading } = useEnrollmentProfile(userId)
+
+  // Keep the picker's local name cache in step with the backend (e.g. a user named on another device).
+  useEffect(() => {
+    if (hasDisplayName && displayName) rememberName(userId, displayName)
+  }, [userId, displayName, hasDisplayName, rememberName])
 
   if (!building) {
     return (
@@ -67,12 +73,12 @@ export function CheckpointPage() {
           >
             {knownUsers.map((id) => (
               <option key={id} value={id}>
-                {id}
+                {userNames[id] ?? (id === userId && displayName ? displayName : 'Unnamed user')}
               </option>
             ))}
           </select>
         ) : (
-          <p className="text-sm font-medium text-foreground">{userId}</p>
+          <p className="text-sm font-medium text-foreground">{displayName ?? (loading ? '...' : 'Unnamed user')}</p>
         )}
       </motion.div>
 
@@ -147,11 +153,10 @@ export function CheckpointPage() {
           </Link>
         )}
         {/* Always available, even with only one known user - a different person enrolling never
-            overwrites this user's templates: it switches the active session to a brand-new
-            user_id first (useAuthSession::registerNewUser), then goes to registration for it. */}
+            overwrites this user's templates: the registration page first asks for the new person's
+            name and creates a new backend user (with its own internal id) for them. */}
         <Link
-          to={`/building/${building.id}/register`}
-          onClick={() => registerNewUser()}
+          to={`/building/${building.id}/register?new=1`}
           className="text-xs font-medium text-primary transition-colors hover:underline"
         >
           + New Registration

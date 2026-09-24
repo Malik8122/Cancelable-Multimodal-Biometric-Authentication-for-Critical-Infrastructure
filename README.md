@@ -66,6 +66,24 @@ Multimodal score fusion (fusion/)                        [Phase 3]
 AUTHENTICATE / REJECT
 ```
 
+### Biometric similarity metrics
+
+| Component | Metric | Threshold / decision |
+|---|---|---|
+| Face | Cosine similarity (calibrated estimate) | ≥ 0.80, higher is better |
+| Voice | Euclidean distance (calibrated estimate) | ≤ 0.75, **lower** is better |
+| Fusion | Mean of the modality scores on one higher-is-better scale (voice converted with 1 − d²/2) | `ALL_REQUIRED` by default |
+| Cancelable template | Hamming distance between 256-bit BioHash templates | the comparison the decisions are derived from |
+
+Raw embeddings are never stored, so face cosine and voice Euclidean distance cannot be computed exactly at
+verification. They are estimated from the template Hamming comparison through an offline calibration of the BioHash
+transform itself (not real biometric data), and are always labelled as estimates. The 0.80 / 0.75 thresholds are
+teacher-requested project settings (`FACE_COSINE_THRESHOLD`, `VOICE_EUCLIDEAN_THRESHOLD`), not experimentally
+calibrated. Full explanation: [`docs/BIOMETRIC_METRICS.md`](docs/BIOMETRIC_METRICS.md).
+
+Registration asks for a human-readable name first (`POST /users`). The name is only a label: the server-generated
+internal `user_id` remains the identifier, so two people may share a name.
+
 ## Project roadmap
 
 **Current architecture:** authentication is user-driven. Users enroll any subset of face / fingerprint / voice and choose which enrolled factors to present in each session; buildings are context only (no biometric policy). The backend authenticates and fuses exactly the submitted modalities - a modality that is not enrolled is `ENROLLMENT_REQUIRED`, not a denial. A user's credential is a pool of *template sets* (set 1 active, the rest standby) revoked as a whole, and only one fused similarity is exposed. See [`docs/MULTI_TEMPLATE_ARCHITECTURE.md`](docs/MULTI_TEMPLATE_ARCHITECTURE.md).
@@ -155,6 +173,20 @@ Then see `docs/BACKEND_API.md` for the full endpoint reference, or open
 `http://127.0.0.1:8000/docs` for interactive Swagger docs. By default this
 creates a local `biometric.db` SQLite file (gitignored) storing **only**
 protected templates — never raw images or raw embeddings.
+
+### Run the frontend
+
+Requires Node.js 20.19+ or 22.12+ (Vite 8). In a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173 - talks to http://127.0.0.1:8000 by default
+```
+
+Open `http://localhost:5173`, pick a building, choose **+ New Registration**, enter a name, then enroll face and
+voice. Camera and microphone access need `localhost` or HTTPS. Set `DEBUG_SCORES=true` in `.env` (local development
+only) to see Face / Voice Similarity on the result page; otherwise only the fusion score and decision are shown.
 
 ### Train the models
 

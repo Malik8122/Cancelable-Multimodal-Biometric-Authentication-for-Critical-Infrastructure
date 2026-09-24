@@ -397,6 +397,7 @@ def test_production_response_exposes_only_the_fusion_values(client, monkeypatch)
         "user_id", "authentication_state", "status", "authenticated", "fusion_similarity", "fusion_distance",
         "fusion_threshold", "fusion_policy", "matched_modalities", "modalities_used", "active_template_set",
         "template_set_version", "key_version", "authentication_time_ms", "building_id",
+        "display_name",  # granted: the user's name (never on a denial)
     }
     assert {"results", "score", "threshold", "distance", "fused_score", "face_similarity", "voice_similarity"}.isdisjoint(body)
     entry = _audit(client, "u")[0]

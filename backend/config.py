@@ -128,6 +128,18 @@ class Settings(BaseSettings):
     #: for why calibration was deliberately deferred.
     match_threshold: float = 0.9
 
+    #: Face decision threshold on the CALIBRATED ESTIMATE of the embedding cosine similarity
+    #: (template_protection/metric_estimation.py): estimated cosine >= this -> face matches (higher = better).
+    #: A teacher-requested project setting, NOT derived from genuine/impostor data - no FAR/FRR is claimed for it.
+    #: The comparison itself stays a Hamming comparison: this value is translated into the equivalent
+    #: template Hamming similarity through the calibration curve. Env: FACE_COSINE_THRESHOLD.
+    face_cosine_threshold: float = Field(default=0.80, ge=-1.0, le=1.0)
+
+    #: Voice decision threshold on the CALIBRATED ESTIMATE of the Euclidean distance between the unit-length
+    #: voice embeddings: estimated distance <= this -> voice matches (LOWER = better; range 0..2).
+    #: Teacher-requested, not experimentally calibrated. Env: VOICE_EUCLIDEAN_THRESHOLD.
+    voice_euclidean_threshold: float = Field(default=0.75, ge=0.0, le=2.0)
+
     @property
     def resolved_database_url(self) -> str:
         """The SQLAlchemy URL `backend/database/session.py::get_engine` should actually use.

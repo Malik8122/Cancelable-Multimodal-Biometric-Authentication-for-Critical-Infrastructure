@@ -11,6 +11,8 @@ import { APPLICATION_ID } from '../config/app'
 export function useEnrollmentProfile(userId: string) {
   const [enrolled, setEnrolled] = useState<Partial<Record<Modality, boolean>> | null>(null)
   const [statuses, setStatuses] = useState<Partial<Record<Modality, EnrollmentStatus>>>({})
+  const [displayName, setDisplayName] = useState<string | null>(null)
+  const [hasDisplayName, setHasDisplayName] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -19,6 +21,8 @@ export function useEnrollmentProfile(userId: string) {
       const profile = await getEnrollmentStatus(userId, APPLICATION_ID)
       setEnrolled(profile.modalities)
       setStatuses(profile.statuses)
+      setDisplayName(profile.display_name)
+      setHasDisplayName(profile.has_display_name)
       setError(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'The backend is unreachable.')
@@ -32,5 +36,5 @@ export function useEnrollmentProfile(userId: string) {
   }, [refresh])
 
   const enrolledList = (Object.keys(enrolled ?? {}) as Modality[]).filter((m) => enrolled?.[m])
-  return { enrolled, statuses, enrolledList, error, loading, refresh }
+  return { enrolled, statuses, enrolledList, displayName, hasDisplayName, error, loading, refresh }
 }

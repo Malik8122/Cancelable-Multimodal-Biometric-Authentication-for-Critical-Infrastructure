@@ -45,6 +45,8 @@ class User(Base):
     #: `user_id` means everywhere in the API and in template_protection's
     #: key derivation.
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    #: The human-readable DISPLAY NAME (backend/display_names.py) - a label only, never an identifier. NULL for users
+    #: enrolled before names existed (they are shown as "User <short id>").
     username: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

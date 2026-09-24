@@ -86,6 +86,9 @@ class AuthenticationDecision(BaseModel):
     authentication_time_ms: int = 0
     #: The facility label of this session (context only - it never changes which modalities are evaluated).
     building_id: str | None = None
+    #: The user's human-readable name - present ONLY when access was granted (a denied attempt learns nothing about
+    #: whose account it tried). Never used for any biometric computation or key derivation.
+    display_name: str | None = None
 
     # --- debug-only (DEBUG_SCORES=true); None => omitted from the JSON ---
     template_version: int | None = None
@@ -107,12 +110,27 @@ class AuthenticationDecision(BaseModel):
 
 
 class ModalityAuthenticationResult(BaseModel):
-    """DEBUG ONLY: one modality's internal result (`DEBUG_SCORES=true`)."""
+    """DEBUG ONLY: one modality's internal result (`DEBUG_SCORES=true`).
+
+    `score`/`threshold` are on the fusion scale (higher = better). `metric*` is the modality's own decision metric
+    (backend/services/modality_metrics.py): "cosine_estimate" (face, higher = better), "euclidean_estimate" (voice,
+    LOWER = better) or "hamming" - the two estimates are calibrated estimates derived from the template Hamming
+    comparison, not exact embedding metrics. `hamming_*` is the template comparison itself. Never an embedding,
+    template or key.
+    """
 
     score: float
     threshold: float
     authenticated: bool
     distance: float = 0.0
+    metric: str = ""
+    metric_value: float = 0.0
+    metric_threshold: float = 0.0
+    metric_higher_is_better: bool = True
+    metric_uncertainty: float = 0.0
+    hamming_similarity: float = 0.0
+    hamming_distance_bits: int = 0
+    template_bits: int = 0
     template_version: int = 0
     key_version: int = 0
     #: True only when a per-modality result exists at all: `call_modality_service` fails the whole
@@ -278,6 +296,22 @@ class EnrollmentStatusResponse(BaseModel):
     modalities: dict[str, bool]
     #: NOT_REGISTERED / REGISTERED / UPDATED / RETRY_REQUIRED (voice only) per modality.
     statuses: dict[str, str]
+    #: The user's display name, or the "User <short id>" fallback; `has_display_name` says which.
+    display_name: str = ""
+    has_display_name: bool = False
+
+
+class CreateUserRequest(BaseModel):
+    """POST /users and POST /user/{id}/display-name. The name is validated by backend/display_names.py."""
+
+    display_name: str
+
+
+class UserProfileResponse(BaseModel):
+    """A user's internal id and display name. The id is what every other endpoint takes; the name is only a label."""
+
+    user_id: str
+    display_name: str
 
 
 class BuildingResponse(BaseModel):
