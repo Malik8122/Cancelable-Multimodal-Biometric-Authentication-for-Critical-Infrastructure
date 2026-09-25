@@ -1,0 +1,33 @@
+evidence_label,modality,condition,n_genuine,n_impostor,failure_to_acquire_rate,mean_genuine_hamming,mean_genuine_estimated_cosine,FRR_at_operating,FAR_at_operating,EER,operating_rule,note,mean_genuine_estimated_distance,mean_genuine_hamming_similarity
+REAL DATA,face,clean,200,200,0,0.757246,0.632709,0.805,0,0.075,estimated_cosine >= 0.8,,,
+REAL DATA,face,dark_gamma2.2,200,200,0,0.717129,0.51798,0.935,0,0.15,estimated_cosine >= 0.8,,,
+REAL DATA,face,bright_gamma0.45,200,200,0,0.75291,0.625204,0.835,0,0.0675,estimated_cosine >= 0.8,,,
+REAL DATA,face,low_contrast_x0.4,200,200,0,0.748008,0.611422,0.845,0,0.075,estimated_cosine >= 0.8,,,
+REAL DATA,face,blur_sigma2,200,200,0,0.727461,0.552553,0.93,0,0.11,estimated_cosine >= 0.8,,,
+REAL DATA,face,blur_sigma4,200,200,0,0.62332,0.215801,1,0,0.37,estimated_cosine >= 0.8,,,
+REAL DATA,face,rotation_15deg,200,200,0,0.751641,0.618495,0.82,0,0.0775,estimated_cosine >= 0.8,,,
+REAL DATA,face,rotation_30deg,200,200,0,0.718262,0.523864,0.95,0,0.12,estimated_cosine >= 0.8,,,
+REAL DATA,face,distance_scale0.5,200,200,0,0.753945,0.624637,0.825,0,0.0775,estimated_cosine >= 0.8,,,
+REAL DATA,face,distance_scale0.25,200,200,0,0.712598,0.510001,0.945,0,0.1225,estimated_cosine >= 0.8,,,
+REAL DATA,face,occlusion_eyes_band,200,200,0.18,0.654025,0.323252,1,0,0.213477,estimated_cosine >= 0.8,,,
+REAL DATA,face,occlusion_lower_third,200,200,0,0.719043,0.529086,0.945,0,0.1,estimated_cosine >= 0.8,,,
+FUTURE WORK,face,head_pose,,,,,,,,,,NOT AVAILABLE - pose cannot be simulated faithfully from 2-D images,,
+REAL DATA,voice,clean,200,200,0,0.81293,,0.24,0.005,0.0375,estimated_distance <= 0.75,,0.645986,
+REAL DATA,voice,white_noise_snr20,200,200,0,0.74873,,0.685,0,0.1,estimated_distance <= 0.75,,0.854733,
+REAL DATA,voice,white_noise_snr10,200,200,0,0.683184,,0.905,0,0.22,estimated_distance <= 0.75,,1.06117,
+REAL DATA,voice,white_noise_snr5,200,200,0,0.653027,,0.945,0,0.2525,estimated_distance <= 0.75,,1.15307,
+REAL DATA,voice,background_speech_snr10,200,200,0,0.780508,,0.465,0,0.0575,estimated_distance <= 0.75,,0.752443,
+REAL DATA,voice,telephone_band_300_3400Hz,200,200,0,0.751152,,0.715,0,0.1025,estimated_distance <= 0.75,,0.848392,
+REAL DATA,voice,speed_0.9,200,200,0,0.696758,,0.89,0.005,0.2275,estimated_distance <= 0.75,,1.01751,
+REAL DATA,voice,speed_1.1,200,200,0,0.721914,,0.82,0.005,0.145,estimated_distance <= 0.75,,0.941031,
+REAL DATA,voice,pitch_minus2.04_semitones,200,200,0,0.675762,,0.95,0.005,0.295,estimated_distance <= 0.75,,1.08268,
+REAL DATA,voice,pitch_plus2.04_semitones,200,200,0,0.682285,,0.925,0,0.2275,estimated_distance <= 0.75,,1.06436,
+FUTURE WORK,voice,different_physical_microphone,,,,,,,,,,NOT AVAILABLE - needs real re-recordings; telephone band-pass is a channel simulation only,,
+REAL DATA,fingerprint,clean_altered_easy,200,200,0,0.944063,,0.065,0.16,0.1,hamming_similarity >= 0.9,,,0.944063
+REAL DATA,fingerprint,rotation_15deg,200,200,0,0.902988,,0.43,0.145,0.29,hamming_similarity >= 0.9,,,0.902988
+REAL DATA,fingerprint,rotation_30deg,200,200,0,0.887148,,0.715,0.18,0.3975,hamming_similarity >= 0.9,,,0.887148
+REAL DATA,fingerprint,dry_finger_erosion,200,200,0,0.872949,,0.885,0.095,0.465,hamming_similarity >= 0.9,,,0.872949
+REAL DATA,fingerprint,wet_finger_smudge,200,200,0,0.885293,,0.685,0.12,0.3925,hamming_similarity >= 0.9,,,0.885293
+REAL DATA,fingerprint,partial_print_top50,200,200,0,0.889492,,0.645,0.105,0.3925,hamming_similarity >= 0.9,,,0.889492
+REAL DATA,fingerprint,dataset_Altered-Medium,852,200,0,0.923622,,0.206573,0.16,0.181702,hamming_similarity >= 0.9,SOCOFing's own altered impressions (real alteration),,0.923622
+REAL DATA,fingerprint,dataset_Altered-Hard,696,200,0,0.912379,,0.33477,0.16,0.24069,hamming_similarity >= 0.9,SOCOFing's own altered impressions (real alteration),,0.912379

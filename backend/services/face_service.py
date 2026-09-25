@@ -20,5 +20,5 @@ def get_face_service() -> ModalityService:
     restarting the process (which clears the cache) to pick it up.
     """
     settings = get_settings()
-    pipeline = FacePipeline(checkpoint_path=settings.face_model_path)
+    pipeline = FacePipeline(checkpoint_path=settings.face_model_path, alignment=settings.face_alignment)
     return ModalityService(modality="face", pipeline=pipeline, settings=settings)

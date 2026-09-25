@@ -55,3 +55,11 @@ kaggle_output/
 Thumbs.db
 .vscode/
 .idea/
+
+# --- Reproduced training runs: checkpoints are large and regenerable (records are committed) ---
+training/*/runs/*/checkpoints/*.pt
+training/*/runs/*/checkpoints/*.h5
+training/*/*/runs/*/checkpoints/*.pt
+
+# Regenerable pytest JUnit report (records the machine hostname); counts are kept in evaluation/results/software_validation.csv
+evaluation/reports/pytest_junit.xml

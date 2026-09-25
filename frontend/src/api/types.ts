@@ -27,7 +27,7 @@ export interface EnrollResponse {
 // angled in frame, or too low-confidence a detection; the valid embeddings are averaged into a
 // centroid and the templates come from it alone.
 export type FacePose = 'front' | 'left' | 'right' | 'up' | 'down'
-export type PoseStatus = 'VALID' | 'NO_FACE' | 'BLURRY' | 'MULTIPLE_FACES' | 'TOO_SMALL' | 'OFF_CENTER' | 'TOO_ANGLED' | 'LOW_CONFIDENCE'
+export type PoseStatus = 'VALID' | 'NO_FACE' | 'BLURRY' | 'MULTIPLE_FACES' | 'TOO_SMALL' | 'OFF_CENTER' | 'TOO_ANGLED' | 'LOW_CONFIDENCE' | 'ALIGNMENT_FAILED' | 'LANDMARK_FAILURE'
 
 export interface PoseResult {
   pose: FacePose

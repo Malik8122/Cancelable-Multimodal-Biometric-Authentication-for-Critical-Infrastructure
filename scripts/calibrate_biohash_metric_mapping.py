@@ -59,8 +59,8 @@ from template_protection.hkdf_keys import KeyMaterial, derive_key
 from template_protection.metric_estimation import CALIBRATION_PATH, fitted_hamming_similarity
 from template_protection.transform import apply_permutation, build_orthonormal_projection, project, quantize
 
-#: Embedding dimensions (models/face/inference.py, models/voice/inference.py, models/fingerprint/inference.py).
-MODALITY_DIMS = {"face": 512, "voice": 192, "fingerprint": 256}
+#: Embedding dimensions - must equal the *_EMBEDDING_DIM constants (models/face/inference.py, models/voice/inference.py, models/fingerprint/inference.py).
+MODALITY_DIMS = {"face": 512, "voice": 192, "fingerprint": 512}
 
 #: A fixed, obviously-synthetic secret: calibration keys only need to be independent draws of the key-derived
 #: transform, never real user keys.
@@ -123,6 +123,17 @@ def calibrate_modality(modality: str, dim: int, bits: int, grid: np.ndarray, key
         "embedding_dim": dim,
         "coefficients": [round(c, 6) for c in coefficients],
         "max_fit_residual": round(float(np.max(np.abs(fitted - mean))), 5),
+        # SYNTHETIC CALIBRATION fit quality of the curve against the per-grid-point mean Hamming similarity
+        # (not biometric accuracy; see scripts/validate_calibration_real.py for real-embedding validation).
+        "fit_statistics": {
+            "evidence_label": "SYNTHETIC CALIBRATION",
+            "R2": round(float(1 - np.sum((fitted - mean) ** 2) / np.sum((mean - mean.mean()) ** 2)), 8),
+            "RMSE": round(float(np.sqrt(np.mean((fitted - mean) ** 2))), 6),
+            "MAE": round(float(np.mean(np.abs(fitted - mean))), 6),
+            "single_estimate_cosine_sd_mean": round(float(estimates.std(axis=1).mean()), 5),
+            "single_estimate_cosine_sd_at_0.80": round(float(estimates.std(axis=1)[int(np.argmin(np.abs(grid - 0.8)))]), 5),
+        },
+        "fit_residuals": [round(float(r), 6) for r in (mean - fitted)],
         "cosine": [round(float(c), 4) for c in grid],
         "hamming_similarity_mean": [round(float(m), 5) for m in mean],
         "hamming_similarity_std": [round(float(s), 5) for s in samples.std(axis=1)],

@@ -165,6 +165,17 @@ class FacePreprocessor:
 
         detector = self._get_detector()
         pil_image = Image.fromarray(image)
+        box, probability, landmarks = self._detect_single(pil_image)
+
+        face_tensor = extract_face(pil_image, box, image_size=detector.image_size, margin=detector.margin)
+        face_tensor = fixed_image_standardization(face_tensor)
+        arr = face_tensor.permute(1, 2, 0).detach().cpu().numpy()
+        arr = ((arr * 128.0) + 127.5).clip(0, 255).astype(np.uint8)
+        return self._with_quality_signals(arr, image, box, probability, landmarks)
+
+    def _detect_single(self, pil_image):
+        """(box, probability, landmarks) of the single confident face; ValueError / MultipleFacesDetected otherwise."""
+        detector = self._get_detector()
         boxes, probs, points = detector.detect(pil_image, landmarks=True)
         if boxes is None or len(boxes) == 0:
             raise ValueError("No face detected in the provided image.")
@@ -184,14 +195,14 @@ class FacePreprocessor:
         if len(boxes) > 1:
             raise MultipleFacesDetected(len(boxes))
 
-        box = boxes[0]
-        probability = float(probs[0])
-        landmarks = points[0]  # (5, 2): left_eye, right_eye, nose, mouth_left, mouth_right
+        return boxes[0], float(probs[0]), points[0]  # landmarks (5, 2): left_eye, right_eye, nose, mouth_left, mouth_right
 
-        face_tensor = extract_face(pil_image, box, image_size=detector.image_size, margin=detector.margin)
-        face_tensor = fixed_image_standardization(face_tensor)
-        arr = face_tensor.permute(1, 2, 0).detach().cpu().numpy()
-        arr = ((arr * 128.0) + 127.5).clip(0, 255).astype(np.uint8)
+    @staticmethod
+    def _with_quality_signals(arr, image, box, probability, landmarks) -> "FaceDetection":
+        """Quality signals: geometry from the ORIGINAL capture (box, landmarks), sharpness from `arr` (the crop that
+        will be embedded)."""
+        import cv2
+
         sharpness = float(cv2.Laplacian(cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY), cv2.CV_64F).var())
 
         image_height, image_width = image.shape[0], image.shape[1]
@@ -218,3 +229,126 @@ class FacePreprocessor:
             roll_degrees=roll_degrees,
             yaw_ratio=yaw_ratio,
         )
+
+
+# ----------------------------------------------------------------------------- landmark-based alignment
+
+#: Canonical 5-point template in the 160x160 output frame (x right, y down), order: left eye, right eye, nose,
+#: mouth left, mouth right ("left" = image-left, MTCNN's ordering). Derived, not chosen by hand: the mean landmark
+#: position inside the BASELINE bounding-box crops of the face model's own fine-tuning images (LFW, >= 20 images per
+#: identity, train split), left-right symmetrized so the eyes are level and the nose centred. Keeping the framing the
+#: checkpoint was trained on makes geometric normalization the only change. Reproduce:
+#: `python -m evaluation.ieee.face_alignment_template` -> evaluation/results/face_alignment_template.json.
+ALIGNMENT_TEMPLATE_160 = np.array([
+    [43.60, 63.15],
+    [116.40, 63.15],
+    [80.00, 94.05],
+    [46.92, 120.99],
+    [113.08, 120.99],
+])
+
+#: Landmark geometry below these is treated as degenerate (ALIGNMENT_FAILED) rather than warped.
+MIN_ALIGNMENT_EYE_DISTANCE_PX = 4.0
+ALIGNMENT_SCALE_RANGE = (0.05, 20.0)
+
+ALIGNMENT_FAILED = "ALIGNMENT_FAILED"
+LANDMARK_FAILURE = "LANDMARK_FAILURE"
+
+
+class AlignmentFailed(ValueError):
+    """Landmarks missing, malformed or degenerate, or no valid similarity transform. A ValueError subclass so every
+    existing caller that turns a preprocessing ValueError into a clean rejection keeps doing so (no API crash)."""
+
+
+class LandmarkFailure(AlignmentFailed):
+    """The detector's landmarks are missing, malformed or non-finite (status LANDMARK_FAILURE) - as opposed to
+    present-but-degenerate geometry, which is ALIGNMENT_FAILED. Subclass, so `except AlignmentFailed` still covers it."""
+
+
+def validate_landmarks(landmarks) -> np.ndarray:
+    """Return landmarks as a finite (5, 2) float array with a usable eye geometry. Raises LandmarkFailure if they are
+    missing/malformed/non-finite, AlignmentFailed if they are degenerate (eyes too close, collinear)."""
+    if landmarks is None:
+        raise LandmarkFailure("No facial landmarks were returned by the detector.")
+    try:
+        pts = np.asarray(landmarks, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise LandmarkFailure(f"Malformed facial landmarks: {error}") from error
+    if pts.shape != (5, 2) or not np.all(np.isfinite(pts)):
+        raise LandmarkFailure(f"Expected 5 finite (x, y) landmarks, got shape {pts.shape}.")
+    eye_distance = float(np.linalg.norm(pts[1] - pts[0]))
+    if eye_distance < MIN_ALIGNMENT_EYE_DISTANCE_PX:
+        raise AlignmentFailed(f"Degenerate landmarks: eye distance {eye_distance:.2f}px.")
+    # all five points (nearly) on one line -> rotation is not determined
+    centred = pts - pts.mean(axis=0)
+    singular = np.linalg.svd(centred, compute_uv=False)
+    if singular[1] < 1e-3 * singular[0]:
+        raise AlignmentFailed("Degenerate landmarks: points are collinear.")
+    return pts
+
+
+def estimate_similarity_transform(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+    """Least-squares similarity transform (rotation, uniform scale, translation; no reflection) mapping `src` onto
+    `dst` (Umeyama 1991). Returns the 2x3 matrix M with dst ~= M @ [x, y, 1]. Raises AlignmentFailed if undefined."""
+    src, dst = np.asarray(src, dtype=np.float64), np.asarray(dst, dtype=np.float64)
+    mu_s, mu_d = src.mean(axis=0), dst.mean(axis=0)
+    s0, d0 = src - mu_s, dst - mu_d
+    var_s = float((s0 ** 2).sum() / len(src))
+    if var_s <= 1e-12:
+        raise AlignmentFailed("Degenerate landmarks: zero spread.")
+    cov = d0.T @ s0 / len(src)
+    U, D, Vt = np.linalg.svd(cov)
+    S = np.eye(2)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:  # exclude reflections
+        S[1, 1] = -1.0
+    R = U @ S @ Vt
+    scale = float(np.trace(np.diag(D) @ S) / var_s)
+    if not np.isfinite(scale) or not (ALIGNMENT_SCALE_RANGE[0] <= scale <= ALIGNMENT_SCALE_RANGE[1]):
+        raise AlignmentFailed(f"Implausible alignment scale {scale:.3f}.")
+    t = mu_d - scale * R @ mu_s
+    return np.c_[scale * R, t]
+
+
+def align_face(image: np.ndarray, landmarks, size: int = FACE_INPUT_SIZE) -> np.ndarray:
+    """Warp `image` so its 5 landmarks land on ALIGNMENT_TEMPLATE_160 (scaled to `size`). Bilinear interpolation,
+    constant black border (the same fill MTCNN's box crop uses outside the image). Returns (size, size, 3) uint8."""
+    import cv2
+
+    pts = validate_landmarks(landmarks)
+    M = estimate_similarity_transform(pts, ALIGNMENT_TEMPLATE_160 * (size / 160.0))
+    return cv2.warpAffine(np.ascontiguousarray(image), M, (size, size), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+
+
+#: The unchanged bounding-box pipeline, named explicitly for A/B experiments.
+FacePreprocessorBaseline = FacePreprocessor
+
+
+class FacePreprocessorAligned(FacePreprocessor):
+    """MTCNN detection -> 5 landmarks -> similarity alignment to ALIGNMENT_TEMPLATE_160 -> 160x160 RGB uint8.
+
+    Face selection mirrors the baseline exactly: `preprocess` (authentication) takes the LARGEST detected face, like
+    MTCNN.forward(select_largest=True); `detect_and_align` (enrollment) applies the same confidence filter and
+    single-face rule. Quality gates are unchanged and still reject BEFORE embedding: geometric signals (size, centring,
+    roll, yaw) are measured on the original capture, sharpness on the aligned crop that is embedded. Landmarks are
+    transient - never returned, stored or logged.
+    """
+
+    def preprocess(self, image: np.ndarray) -> np.ndarray:
+        from PIL import Image
+
+        boxes, _, points = self._get_detector().detect(Image.fromarray(image), landmarks=True)
+        if boxes is None or len(boxes) == 0:
+            raise ValueError("No face detected in the provided image.")
+        boxes = np.asarray(boxes, dtype=np.float64)
+        k = int(np.argmax((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])))
+        if points is None or points[k] is None:
+            raise AlignmentFailed("No facial landmarks were returned by the detector.")
+        return align_face(image, points[k])
+
+    def detect_and_align(self, image: np.ndarray) -> FaceDetection:
+        from PIL import Image
+
+        box, probability, landmarks = self._detect_single(Image.fromarray(image))
+        arr = align_face(image, landmarks)
+        return self._with_quality_signals(arr, image, box, probability, validate_landmarks(landmarks))

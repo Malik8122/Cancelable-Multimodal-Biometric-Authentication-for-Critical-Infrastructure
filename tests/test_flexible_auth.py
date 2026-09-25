@@ -125,7 +125,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'bp.db'}")
     _reset_caches()
     monkeypatch.setattr(face_service, "get_face_service", _stub_getter("face", 512))
-    monkeypatch.setattr(fingerprint_service, "get_fingerprint_service", _stub_getter("fingerprint", 256))
+    monkeypatch.setattr(fingerprint_service, "get_fingerprint_service", _stub_getter("fingerprint", 512))
     monkeypatch.setattr(voice_service, "get_voice_service", _stub_getter("voice", 192))
     from backend.main import app
 

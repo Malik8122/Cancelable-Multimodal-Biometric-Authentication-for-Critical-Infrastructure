@@ -86,7 +86,7 @@ refuse to use mock embeddings outside of tests/demos.
 
 | Modality | Classical CV | Deep learning |
 |---|---|---|
-| Face | Geometric alignment (post-landmark) | MTCNN detection/landmarks; InceptionResnetV1 embedding |
+| Face | bounding-box crop (default `FACE_ALIGNMENT=bbox`); optional 5-landmark similarity alignment (`FACE_ALIGNED`), see `evaluation/reports/FACE_ALIGNMENT_DECISION.md` | MTCNN detection/landmarks; InceptionResnetV1 embedding |
 | Iris | Hough circle localization; Daugman rubber-sheet normalization | ResNet18 embedding |
 | Fingerprint | CLAHE contrast enhancement; ridge normalization; Gabor filtering | ResNet50 embedding |
 

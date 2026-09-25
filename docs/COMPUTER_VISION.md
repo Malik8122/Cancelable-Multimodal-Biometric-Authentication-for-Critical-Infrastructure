@@ -9,9 +9,9 @@ For every modality, the pipeline has two stages, and it matters to be able to sa
 
 | Modality | Preprocessing (classical CV) | Embedding (deep learning) |
 |---|---|---|
-| Face | MTCNN detection + landmark-based geometric alignment | InceptionResnetV1 (512-d) |
-| Iris | Hough Circle Transform localization + Daugman rubber-sheet normalization | ResNet18 + projection head (256-d) |
-| Fingerprint | CLAHE contrast enhancement + statistical ridge normalization + Gabor filter bank enhancement | ResNet50 + projection head (256-d) |
+| Face | MTCNN detection + bounding-box crop (default `FACE_ALIGNMENT=bbox`); optional 5-landmark similarity alignment (`FACE_ALIGNED`), see `evaluation/reports/FACE_ALIGNMENT_DECISION.md` | InceptionResnetV1 (512-d) |
+| Iris (not trained - mock embedder only) | Hough Circle Transform localization + Daugman rubber-sheet normalization | ResNet18 + projection head (256-d) |
+| Fingerprint | CLAHE contrast enhancement + statistical ridge normalization + Gabor filter bank enhancement | ResNet50 + projection head (512-d) |
 
 ---
 
@@ -28,7 +28,7 @@ detector = MTCNN(image_size=FACE_INPUT_SIZE, margin=0, post_process=True, device
 aligned = detector(pil_image)
 ```
 
-The **alignment** step that follows detection — cropping and geometrically warping the detected face to a canonical 160×160 pose using the five landmark points — is classical geometric image processing (an affine transform derived from the landmark positions), handled internally by `facenet-pytorch`'s `MTCNN.__call__`. This is why the table above lists face preprocessing as "detection + alignment": detection is a small learned network, alignment given the detected landmarks is a deterministic geometric operation. The output is renormalized back to a standard `uint8` RGB array (`arr = ((arr * 128.0) + 127.5).clip(0, 255).astype(np.uint8)`) so the rest of the pipeline never has to know facenet-pytorch's internal tensor normalization convention.
+**Correction (code audit, 2026-09-25):** an earlier version of this section said `MTCNN.__call__` warps the face to a canonical pose using the landmarks. It does not: `facenet-pytorch`'s `extract_face` crops the detected **bounding box** and resizes it to 160×160 (no rotation, no landmark use); the landmarks are used only as enrollment quality signals (roll, yaw). That bounding-box crop is the deployed default (`FACE_ALIGNMENT=bbox`, `FacePreprocessorBaseline`). A genuine 5-landmark similarity alignment (Umeyama least-squares rotation + uniform scale + translation onto a canonical 160×160 template, `preprocessing/face.py::FacePreprocessorAligned`) now exists as the optional `FACE_ALIGNED` mode; its measured effect is in `evaluation/reports/FACE_ALIGNMENT_DECISION.md`. The output is renormalized back to a standard `uint8` RGB array (`arr = ((arr * 128.0) + 127.5).clip(0, 255).astype(np.uint8)`) so the rest of the pipeline never has to know facenet-pytorch's internal tensor normalization convention.
 
 **Why alignment matters at all:** a recognition network trained on canonically-posed faces performs substantially worse on faces at arbitrary rotation/scale/position — alignment removes that variance *before* the network has to learn to be invariant to it, which is both more accurate and requires less training data than expecting the embedding network to learn pose invariance itself.
 

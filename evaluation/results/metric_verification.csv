@@ -1,0 +1,75 @@
+evidence_label,source,metric,reported,recomputed,abs_difference,status,method
+DERIVED,evaluation/results/voice_metrics.csv,accuracy,0.9771185086551265,0.977119,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,far,0.022880636367698978,0.0228806,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,frr,0.02289901534234028,0.022899,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,precision,0.6756927949327,0.675693,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,recall,0.9771009846576597,0.977101,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,f1,0.7989140610372589,0.798914,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,num_genuine_pairs,13101,13101,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,num_impostor_pairs,268524,268524,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,auc,0.9967238482799453,0.996724,0,MATCH,trapezoid over 4303 points of voice_roc.csv
+DERIVED,evaluation/results/voice_metrics.csv,"num_pairs_total_vs_C(n,2)",281625,281625,0,MATCH,from voice_confusion_matrix.csv
+DERIVED,evaluation/results/voice_metrics.csv,TAR,0.9771009846576597,0.977101,0,MATCH,TAR = recall = TP/(TP+FN)
+DERIVED,evaluation/results/voice_metrics.csv,eer_vs_(far+frr)/2,0.022889825855019627,0.0228898,0,MATCH,EER point of the committed confusion matrix
+DERIVED,evaluation/results/fingerprint_metrics.csv,accuracy,0.6922877271041898,0.692288,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,far,0.3077128589263421,0.307713,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,frr,0.30765432098765433,0.307654,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,precision,0.02224637623668113,0.0222464,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,recall,0.6923456790123457,0.692346,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,f1,0.0431076230081557,0.0431076,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,num_genuine_pairs,4050,4050,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,num_impostor_pairs,400500,400500,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,auc,0.7644474138807971,0.764447,0,MATCH,trapezoid over 82927 points of fingerprint_roc.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,"num_pairs_total_vs_C(n,2)",404550,404550,0,MATCH,from fingerprint_confusion_matrix.csv
+DERIVED,evaluation/results/fingerprint_metrics.csv,TAR,0.6923456790123457,0.692346,0,MATCH,TAR = recall = TP/(TP+FN)
+DERIVED,evaluation/results/fingerprint_metrics.csv,eer_vs_(far+frr)/2,0.3076835899569982,0.307684,0,MATCH,EER point of the committed confusion matrix
+DERIVED,evaluation/results/face_metrics.csv,accuracy,0.990,,,NOT VERIFIABLE,no pair-level / ROC data committed for face
+DERIVED,evaluation/results/face_metrics.csv,eer,0.010,,,NOT VERIFIABLE,no pair-level / ROC data committed for face
+DERIVED,evaluation/results/face_metrics.csv,auc,0.999,,,NOT VERIFIABLE,no pair-level / ROC data committed for face
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),num_samples,751,751,0,MATCH,re-extracted test set
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),num_genuine_pairs,13101,13101,0,MATCH,"all pairs, same labels"
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),eer,0.022889825855019627,0.0224318,0.00045802,MATCH,"all-pairs raw cosine, re-extracted embeddings"
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),auc,0.9967238482799453,0.997616,0.000891984,MATCH,"all-pairs raw cosine, re-extracted embeddings"
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),eer_threshold,0.3221414387226105,0.437362,0.11522,DISCREPANCY,all-pairs raw cosine
+REAL DATA,evaluation/results/voice_metrics.csv (reproduction),accuracy_at_eer,0.9771185086551265,0.977577,0.000458056,MATCH,at the reproduced EER threshold
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),num_samples,900,900,0,MATCH,re-extracted test set
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),num_genuine_pairs,4050,4050,0,MATCH,"all pairs, same labels"
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),eer,0.3076835899569982,0.307672,1.1236e-05,MATCH,"all-pairs raw cosine, re-extracted embeddings"
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),auc,0.7644474138807971,0.764448,9.69467e-07,MATCH,"all-pairs raw cosine, re-extracted embeddings"
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),eer_threshold,0.9147047996520996,0.914705,5.96046e-08,MATCH,all-pairs raw cosine
+REAL DATA,evaluation/results/fingerprint_metrics.csv (reproduction),accuracy_at_eer,0.6922877271041898,0.69231,2.22469e-05,MATCH,at the reproduced EER threshold
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),modalities_per_set,3,3,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),sets_per_user,4,4,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),num_users,20,20,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),output_bits,256,256,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_pairs,360,360,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_mean,0.5003472222222223,0.500347,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_std,0.02931795794900415,0.029318,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_min,0.42578125,0.425781,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_max,0.58203125,0.582031,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),same_key_genuine_mean,0.9796223958333333,0.979622,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_mean_face,0.50029296875,0.500293,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_mean_fingerprint,0.49684244791666665,0.496842,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_diversity.csv (re-run),cross_set_similarity_mean_voice,0.50390625,0.503906,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),num_users,20,20,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),modalities_per_set,3,3,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),genuine_similarity_before_mean,0.9806640625,0.980664,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),genuine_similarity_after_mean,0.9798177083333334,0.979818,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),revoked_vs_new_similarity_mean,0.503515625,0.503516,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_revocation.csv (re-run),users_with_all_modalities_in_new_set,20,20,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),num_users,20,20,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),attempts,80,80,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),accepted,80,80,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),acceptance_rate,1.0,1,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),attempts_mixing_sets,0,0,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),mean_similarity_active_set_1,0.9777994791666667,0.977799,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),mean_similarity_active_set_2,0.9826171875,0.982617,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),mean_similarity_active_set_3,0.9790364583333333,0.979036,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_promotion.csv (re-run),mean_similarity_active_set_4,0.9818359375,0.981836,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_exhaustion.csv (re-run),pool_size,4,4,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_exhaustion.csv (re-run),successful_revocations,3,3,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_exhaustion.csv (re-run),expected_successful_revocations,3,3,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/template_set_exhaustion.csv (re-run),final_active_set_version,4,4,0,MATCH,"same function, same default seed"
+SYNTHETIC CALIBRATION,evaluation/results/biohash_metric_calibration.json,face_max_fit_residual,0.00378,0.00378683,6.83389e-06,MATCH,fitted model vs stored means
+SYNTHETIC CALIBRATION,evaluation/results/biohash_metric_calibration.json,voice_max_fit_residual,0.00306,0.00305794,2.0616e-06,MATCH,fitted model vs stored means
+SYNTHETIC CALIBRATION,evaluation/results/biohash_metric_calibration.json,fingerprint_max_fit_residual,0.00296,0.00295914,8.59393e-07,MATCH,fitted model vs stored means

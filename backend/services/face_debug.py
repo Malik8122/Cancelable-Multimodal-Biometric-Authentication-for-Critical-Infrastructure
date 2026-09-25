@@ -79,7 +79,7 @@ def log_authentication_diagnostics(protected_hamming_similarity: float) -> None:
     from any given authentication attempt. There is no raw vector left to compare the live
     embedding against at this point, so this function does not - and architecturally cannot -
     compute that number. `protected_hamming_similarity` is the one real, already-computed
-    measurement available here: the same value `AuthenticationResult.score` carries, restated in
+    measurement available here: the same value `AuthenticationResult.hamming_similarity` carries, restated in
     the "[FACE DEBUG]" format for a single place to look.
     """
     logger.info(

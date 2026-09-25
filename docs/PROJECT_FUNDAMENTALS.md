@@ -96,7 +96,7 @@ No dataset is committed to the repo; raw biometrics exist only inside the traini
 * **Dataset:** LFW (Labeled Faces in the Wild), fetched in-kernel with `sklearn.datasets.fetch_lfw_people(min_faces_per_person=20,
   funneled=True, color=True)` → **3,023 images, 62 identities**. Non-commercial research license.
 * **Model:** `InceptionResnetV1(pretrained='vggface2')` — already trained for face verification on VGGFace2 (~8.6k identities).
-* **Preprocessing before training:** MTCNN detect + landmark alignment → 160×160 crop; pixels normalised `(x-127.5)/128`.
+* **Preprocessing before training:** MTCNN detect → **bounding-box** crop resized to 160×160 (no landmark alignment); pixels normalised `(x-127.5)/128`.
 * **Fine-tuning:** everything frozen **except** `block8`, `last_linear`, `last_bn`; ArcFace head over the 62 identities; Adam,
   lr 1e-4; batch 32; **10 epochs**.
 * **Result (from the run):** epoch 10 — train acc 0.976, val acc 0.913; **EER 0.010, AUC 0.999** (`evaluation/results/face_metrics.csv`).
@@ -245,10 +245,12 @@ Implemented in `backend/services/face_enrollment.py`, `embeddings/centroid.py`, 
 1. **Guided capture.** The UI walks the user through five steps with a circular face guide: **Front, Left, Right, Slight Up,
    Slight Down** (sent as `pose_front … pose_down`). Each capture is checked immediately via `POST /enroll/face/check-pose`
    (stores nothing); a bad capture is retaken on the spot.
-2. **Per pose, the backend runs:** MTCNN face detection → the existing landmark alignment to a 160×160 crop → one 512-d FaceNet
+2. **Per pose, the backend runs:** MTCNN face detection → bounding-box crop resized to 160×160 (default mode; see FACE_ALIGNMENT) → one 512-d FaceNet
    embedding (the fine-tuned checkpoint).
-3. **Rejection rule — only two reasons:** `NO_FACE` (MTCNN found nothing) or `BLURRY` (Laplacian variance of the aligned crop
-   < 25; measured: normal webcam-quality crops 116–920, visibly blurred ≤ 34). Nothing else about a capture is judged.
+3. **Rejection rules** (`embeddings/pipelines.py::_evaluate_face_quality`): `NO_FACE`, `MULTIPLE_FACES`, `LOW_CONFIDENCE` (< 0.90),
+   `BLURRY` (Laplacian variance of the crop < 25; measured: normal webcam-quality crops 116–920, visibly blurred ≤ 34),
+   `TOO_SMALL` (size ratio < 0.15), `OFF_CENTER` (> 0.35), `TOO_ANGLED` (roll > 20° or yaw ratio > 0.20); in the aligned mode also
+   `LANDMARK_FAILURE` / `ALIGNMENT_FAILED`. At least 3 of 5 poses must be VALID.
 4. **Centroid.** The valid unit embeddings are averaged and the mean is re-normalised: `centroid = normalize(mean(e_1 … e_k))`,
    with **at least 3 valid poses** required (fewer → 422, nothing stored).
 5. **Templates from the centroid only.** T1–T4 are produced by the unchanged HKDF + BioHash path from the centroid; the temporary

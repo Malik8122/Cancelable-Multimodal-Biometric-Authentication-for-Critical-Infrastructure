@@ -94,8 +94,12 @@ def train(
     output_dir: str | Path,
     config: FingerprintConfig | None = None,
     device: str | None = None,
+    epoch_callback=None,
 ) -> Path:
     """Fine-tune the fingerprint embedding backbone; returns the best (lowest-EER) checkpoint's path.
+
+    `epoch_callback(info)` (optional, observation only) receives each epoch's metrics plus `saved_best`,
+    `early_stop` and `learning_rate` after checkpointing; it cannot change training.
 
     Saves `best_model.pt` (lowest validation EER, not lowest loss - Part 9)
     and `last_model.pt` every epoch (Part 12), then the canonical
@@ -218,7 +222,9 @@ def train(
         history.append(epoch_metrics)
 
         torch.save(model.state_dict(), last_checkpoint_path)
-        if val_report["eer"] < best_eer:
+        saved_best = val_report["eer"] < best_eer
+        stop = False
+        if saved_best:
             best_eer = val_report["eer"]
             epochs_without_improvement = 0
             torch.save(model.state_dict(), best_checkpoint_path)
@@ -228,12 +234,15 @@ def train(
             # field's docstring in config.py for why a short patience window
             # starting from a cold-start ArcFace head can trigger before the
             # model has had any real chance to learn.
-            if (
+            stop = (
                 epoch >= config.min_epochs_before_early_stopping
                 and epochs_without_improvement >= config.early_stopping_patience
-            ):
-                logger.info("Early stopping at epoch=%d (best_val_eer=%.4f)", epoch, best_eer)
-                break
+            )
+        if epoch_callback is not None:
+            epoch_callback({**epoch_metrics, "saved_best": saved_best, "early_stop": stop})
+        if stop:
+            logger.info("Early stopping at epoch=%d (best_val_eer=%.4f)", epoch, best_eer)
+            break
 
     final_state_dict = torch.load(best_checkpoint_path, map_location=device)
     canonical_pt_path = output_dir / "fingerprint_embedder.pt"

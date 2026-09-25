@@ -1,9 +1,15 @@
 # Cancelable Multimodal Biometric Authentication for Critical Infrastructure
 
 A privacy-preserving biometric authentication system that combines **face,
-iris, and fingerprint** recognition with **cancelable biometric template
-protection**, so that no raw biometric image or unprotected biometric
-embedding is ever stored as the permanent authentication credential.
+voice, and fingerprint** recognition (the user chooses which enrolled
+factors to present; iris is scaffolded but has no trained model and runs only
+on a mock embedder) with **cancelable biometric template protection**, so
+that no raw biometric image or unprotected biometric embedding is ever stored
+as the permanent authentication credential.
+
+> Current, traceable results: [`evaluation/PAPER_RESULTS_INDEX.md`](evaluation/PAPER_RESULTS_INDEX.md);
+> project validation: [`docs/FINAL_PROJECT_VALIDATION.md`](docs/FINAL_PROJECT_VALIDATION.md). Sections below that
+> describe "Phase 1" (face / iris / fingerprint) are the original plan and are kept for history.
 
 This is a final-year capstone project. It is a research/demo system, not a
 production-hardened security product — see [Limitations & honest
@@ -93,7 +99,7 @@ three modalities together — no modality is ever left behind.
 
 | Phase | Focus | Status |
 |---|---|---|
-| **1** | Preprocessing + recognition models for face/iris/fingerprint, individually evaluated | ✅ Implemented (this branch) |
+| **1** | Preprocessing + recognition models for face/iris/fingerprint, individually evaluated | ✅ Implemented for face and fingerprint (voice added later); iris code only, no trained model (mock embedder) |
 | **2** | Cancelable template protection, key management, backend + storage | ✅ Implemented (this branch) |
 | **3** | Multimodal fusion, React dashboard, full cross-modality evaluation | 🔜 Next |
 

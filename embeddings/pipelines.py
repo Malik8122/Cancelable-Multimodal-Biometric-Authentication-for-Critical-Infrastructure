@@ -18,13 +18,18 @@ from models.fingerprint.inference import FingerprintEmbedder
 from models.iris.inference import IrisEmbedder
 from models.voice.inference import VoiceEmbedder
 from preprocessing.face import (
+    ALIGNMENT_FAILED,
+    LANDMARK_FAILURE,
     BLUR_MIN_SHARPNESS,
     MAX_CENTER_OFFSET,
     MAX_ROLL_DEGREES,
     MAX_YAW_RATIO,
     MIN_DETECTION_CONFIDENCE,
     MIN_FACE_SIZE_RATIO,
+    AlignmentFailed,
+    LandmarkFailure,
     FacePreprocessor,
+    FacePreprocessorAligned,
     MultipleFacesDetected,
 )
 from preprocessing.fingerprint import FingerprintPreprocessor
@@ -76,17 +81,32 @@ class ModalityPipeline:
         return self._embedder.mock_mode
 
 
+#: Face preprocessing variants: "bbox" = MTCNN bounding-box crop (baseline, the model's training preprocessing),
+#: "similarity" = 5-landmark similarity alignment (preprocessing/face.py::FacePreprocessorAligned).
+FACE_ALIGNMENT_MODES = ("bbox", "similarity")
+#: Task-level names of the two modes.
+FACE_BASELINE, FACE_ALIGNED = FACE_ALIGNMENT_MODES
+
+
 class FacePipeline(ModalityPipeline):
-    def __init__(self, checkpoint_path: str | Path | None = DEFAULT_CHECKPOINTS["face"], device: str = "cpu"):
-        super().__init__(FacePreprocessor(device=device), FaceEmbedder(checkpoint_path=checkpoint_path, device=device))
+    def __init__(self, checkpoint_path: str | Path | None = DEFAULT_CHECKPOINTS["face"], device: str = "cpu", alignment: str = "bbox"):
+        if alignment not in FACE_ALIGNMENT_MODES:
+            raise ValueError(f"Unknown face alignment {alignment!r}; expected one of {FACE_ALIGNMENT_MODES}")
+        preprocessor = FacePreprocessorAligned(device=device) if alignment == "similarity" else FacePreprocessor(device=device)
+        super().__init__(preprocessor, FaceEmbedder(checkpoint_path=checkpoint_path, device=device))
+        self.alignment = alignment
 
     def check_capture(self, image: np.ndarray) -> str:
         """Verdict for one enrollment pose (nothing is embedded): VALID, NO_FACE, MULTIPLE_FACES,
-        BLURRY, TOO_SMALL, OFF_CENTER, TOO_ANGLED, or LOW_CONFIDENCE."""
+        BLURRY, TOO_SMALL, OFF_CENTER, TOO_ANGLED, LOW_CONFIDENCE, or LANDMARK_FAILURE / ALIGNMENT_FAILED (aligned mode only)."""
         try:
             detection = self._preprocessor.detect_and_align(image)
         except MultipleFacesDetected:
             return "MULTIPLE_FACES"
+        except LandmarkFailure:
+            return LANDMARK_FAILURE
+        except AlignmentFailed:
+            return ALIGNMENT_FAILED
         except ValueError:
             return "NO_FACE"
         return _evaluate_face_quality(detection)
@@ -108,6 +128,12 @@ class FacePipeline(ModalityPipeline):
                 detection = self._preprocessor.detect_and_align(image)
             except MultipleFacesDetected:
                 report.append({"pose": pose, "status": "MULTIPLE_FACES"})
+                continue
+            except LandmarkFailure:
+                report.append({"pose": pose, "status": LANDMARK_FAILURE})
+                continue
+            except AlignmentFailed:
+                report.append({"pose": pose, "status": ALIGNMENT_FAILED})
                 continue
             except ValueError:
                 report.append({"pose": pose, "status": "NO_FACE"})

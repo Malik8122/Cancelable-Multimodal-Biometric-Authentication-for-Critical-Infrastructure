@@ -32,6 +32,7 @@ def train(
     output_dir: str | Path,
     config: VoiceConfig | None = None,
     device: str | None = None,
+    epoch_callback=None,
 ) -> Path:
     """Fine-tune the voice embedding backbone; returns the best checkpoint's path.
 
@@ -43,6 +44,10 @@ def train(
     not just checks availability) but can be overridden explicitly - e.g. by
     a caller that already ran its own device check and wants to reuse it
     rather than re-running the smoke test.
+
+    `epoch_callback(info)` (optional, observation only) is called after every epoch's checkpointing with
+    `epoch`, `train_loss`, `validation_loss`, `learning_rate`, `saved_best`, `model`, `val_dataset` - it cannot change
+    training (used by training/run_training.py to write the standard training record).
     """
     import torch
     from torch.optim import AdamW
@@ -78,6 +83,8 @@ def train(
 
     for epoch in range(config.num_epochs):
         model.train()
+        train_loss_sum, train_count = 0.0, 0
+        lr_this_epoch = optimizer.param_groups[0]["lr"]
         for mel_batch, label_batch in train_loader:
             mel_batch = mel_batch.transpose(1, 2).to(device)  # (batch, n_mels, T) -> (batch, T, n_mels)
             label_batch = label_batch.to(device)
@@ -90,6 +97,8 @@ def train(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            train_loss_sum += loss.item() * label_batch.size(0)  # logging only
+            train_count += label_batch.size(0)
         scheduler.step()
 
         model.eval()
@@ -105,15 +114,22 @@ def train(
         logger.info("epoch=%d val_loss=%.4f", epoch, val_loss)
 
         torch.save(model.state_dict(), last_checkpoint_path)
-        if val_loss < best_val_loss:
+        saved_best = val_loss < best_val_loss
+        stop = False
+        if saved_best:
             best_val_loss = val_loss
             epochs_without_improvement = 0
             torch.save(model.state_dict(), best_checkpoint_path)
         else:
             epochs_without_improvement += 1
-            if epochs_without_improvement >= config.early_stopping_patience:
-                logger.info("Early stopping at epoch=%d (best_val_loss=%.4f)", epoch, best_val_loss)
-                break
+            stop = epochs_without_improvement >= config.early_stopping_patience
+        if epoch_callback is not None:
+            epoch_callback({"epoch": epoch, "train_loss": train_loss_sum / max(train_count, 1), "validation_loss": val_loss,
+                            "learning_rate": lr_this_epoch, "saved_best": saved_best, "model": model, "val_dataset": val_dataset,
+                            "early_stop": stop})
+        if stop:
+            logger.info("Early stopping at epoch=%d (best_val_loss=%.4f)", epoch, best_val_loss)
+            break
 
     final_state_dict = torch.load(best_checkpoint_path, map_location=device)
     canonical_pt_path = output_dir / "voice_embedder.pt"

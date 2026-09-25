@@ -339,6 +339,11 @@ Fingerprint and voice hyperparameters are confirmed both as dataclass defaults (
 
 ### 5.2 IMPORTANT CURRENT FINDING — no landmark-based geometric alignment
 
+> **Update 2026-09-25:** this finding still holds for the deployed default (`FACE_ALIGNMENT=bbox`). A genuine 5-landmark
+> similarity alignment now exists as the optional FACE_ALIGNED mode (`preprocessing/face.py::FacePreprocessorAligned`).
+> It was evaluated with a retrained checkpoint (protected EER 8.67 % → 7.18 %) but is not deployed. See
+> `evaluation/reports/FACE_ALIGNMENT_DECISION.md`.
+
 **FACT, verified directly against the installed `facenet_pytorch` library source this session:**
 
 `MTCNN.detect(img, landmarks=True)` computes both bounding boxes and 5-point landmarks. However, the actual face crop used by this pipeline is produced by `MTCNN.extract()` → `extract_face(img, box, image_size, margin)`, which takes **only the bounding box** — the landmarks are never passed to `extract_face`. There is **no landmark-based rotation/affine correction** anywhere in this pipeline, despite `preprocessing/face.py`'s own module docstring historically describing "alignment... driven by the detected landmarks" (a description now corrected in the current source to explicitly flag this gap — see the docstring update made this session).

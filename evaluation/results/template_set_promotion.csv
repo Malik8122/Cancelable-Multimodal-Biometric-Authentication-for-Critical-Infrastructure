@@ -5,7 +5,7 @@ attempts,80
 accepted,80
 acceptance_rate,1.0
 attempts_mixing_sets,0
-mean_similarity_active_set_1,0.9777994791666667
-mean_similarity_active_set_2,0.9826171875
-mean_similarity_active_set_3,0.9790364583333333
-mean_similarity_active_set_4,0.9818359375
+mean_similarity_active_set_1,0.9764322916666667
+mean_similarity_active_set_2,0.9767578125
+mean_similarity_active_set_3,0.978125
+mean_similarity_active_set_4,0.9785807291666667

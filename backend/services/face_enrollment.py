@@ -29,6 +29,10 @@ TOO_SMALL = "TOO_SMALL"
 OFF_CENTER = "OFF_CENTER"
 TOO_ANGLED = "TOO_ANGLED"
 LOW_CONFIDENCE = "LOW_CONFIDENCE"
+ALIGNMENT_FAILED = "ALIGNMENT_FAILED"  # aligned preprocessing only: landmarks degenerate (no valid similarity transform)
+LANDMARK_FAILURE = "LANDMARK_FAILURE"  # aligned preprocessing only: landmarks missing / malformed / non-finite
+#: The task-level name POSE_INVALID is this module's existing TOO_ANGLED (roll > 20 deg or yaw ratio > 0.20).
+POSE_INVALID = TOO_ANGLED
 
 #: How many valid captures are needed to enroll. The guided UI collects all five (each is checked as it is captured and
 #: retaken if rejected); the backend tolerates a couple of rejected captures so one bad capture never blocks enrollment,
@@ -43,6 +47,8 @@ POSE_HINTS = {
     OFF_CENTER: "Your face isn't centered in the frame. Center your face and try again.",
     TOO_ANGLED: "Your head is turned or tilted too much. Face the camera more directly.",
     LOW_CONFIDENCE: "The camera couldn't get a clear, confident view of your face. Check your lighting and try again.",
+    ALIGNMENT_FAILED: "Your facial features couldn't be located reliably. Face the camera in good light and try again.",
+    LANDMARK_FAILURE: "Your eyes, nose and mouth couldn't be located. Face the camera in good light and try again.",
 }
 
 

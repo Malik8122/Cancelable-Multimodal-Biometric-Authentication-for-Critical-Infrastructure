@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from embeddings.constants import DEFAULT_CHECKPOINTS
@@ -66,6 +67,12 @@ class Settings(BaseSettings):
     #: "where does modality X's checkpoint live" rather than a second,
     #: independently-drifting copy of that mapping.
     face_model_path: Path = DEFAULT_CHECKPOINTS["face"]
+    #: Face preprocessing: "bbox" (MTCNN bounding-box crop - what the deployed checkpoint was trained on) or
+    #: "similarity" (5-landmark similarity alignment, preprocessing/face.py::FacePreprocessorAligned). The mode must
+    #: match the preprocessing the checkpoint at face_model_path was trained with (see
+    #: evaluation/reports/FACE_ALIGNMENT_DECISION.md). Env: FACE_ALIGNMENT. The mode names FACE_BASELINE (= "bbox")
+    #: and FACE_ALIGNED (= "similarity") are accepted as aliases.
+    face_alignment: Literal["bbox", "similarity"] = "bbox"
     iris_model_path: Path = DEFAULT_CHECKPOINTS["iris"]
     fingerprint_model_path: Path = DEFAULT_CHECKPOINTS["fingerprint"]
     voice_model_path: Path = DEFAULT_CHECKPOINTS["voice"]
@@ -139,6 +146,17 @@ class Settings(BaseSettings):
     #: voice embeddings: estimated distance <= this -> voice matches (LOWER = better; range 0..2).
     #: Teacher-requested, not experimentally calibrated. Env: VOICE_EUCLIDEAN_THRESHOLD.
     voice_euclidean_threshold: float = Field(default=0.75, ge=0.0, le=2.0)
+
+    #: Provenance of face_cosine_threshold / voice_euclidean_threshold. TEACHER_REQUESTED_BASELINE = the values above
+    #: were set as a project requirement, not selected from genuine/impostor data (no optimality is claimed). Only a
+    #: threshold selected on a validation split and documented in evaluation/reports/THRESHOLD_ANALYSIS.md may be
+    #: labelled EXPERIMENTALLY_SELECTED. Informational - never changes a decision. Env: THRESHOLD_SOURCE.
+    threshold_source: Literal["TEACHER_REQUESTED_BASELINE", "EXPERIMENTALLY_SELECTED"] = "TEACHER_REQUESTED_BASELINE"
+
+    @field_validator("face_alignment", mode="before")
+    @classmethod
+    def _face_alignment_aliases(cls, value):
+        return {"FACE_BASELINE": "bbox", "FACE_ALIGNED": "similarity"}.get(value, value)
 
     @property
     def resolved_database_url(self) -> str:

@@ -379,7 +379,7 @@ real legacy database and by tests for both legacy shapes.
 
 `python -m evaluation.template_set_experiments` writes
 `evaluation/results/template_set_{diversity,revocation,promotion,exhaustion}.csv`.
-Synthetic embeddings (face 512-d, fingerprint 256-d, voice 192-d), 256-bit
+Synthetic embeddings (face 512-d, fingerprint 512-d, voice 192-d; fingerprint was 256-d until corrected 2026-09-25), 256-bit
 templates, 4 sets, three modalities per set, genuine re-capture simulated as cosine
 ~0.995. The lifecycle runs on the real `crud` + `ModalityService` code over an
 in-memory database. (The 403 authorization gate is covered by

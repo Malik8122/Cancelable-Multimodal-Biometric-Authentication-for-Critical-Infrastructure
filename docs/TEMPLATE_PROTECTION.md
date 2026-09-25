@@ -80,10 +80,10 @@ via QR decomposition of a Gaussian random matrix.
 
 **Honest limitation:** true orthonormality across *every* row is only
 possible when `output_bits <= embedding_dim` (a real matrix's rank can't
-exceed its smaller dimension). Face embeddings are 512-dimensional; iris and
-fingerprint are 256-dimensional (see `models/*/inference.py`). When a caller
-requests more output bits than the embedding has dimensions (e.g. a 512-bit
-iris template), this function composes multiple independent orthonormal
+exceed its smaller dimension). Face and fingerprint embeddings are 512-dimensional,
+voice 192 and the (untrained, mock-only) iris model 256 (see `models/*/inference.py`). When a caller
+requests more output bits than the embedding has dimensions (e.g. a 256-bit
+voice template, the deployed case), this function composes multiple independent orthonormal
 *blocks* - each block is internally orthonormal, but rows in different blocks
 are not orthogonal to each other. This is a deliberate, documented tradeoff:
 the alternative would be silently degrading to some other, weaker scheme

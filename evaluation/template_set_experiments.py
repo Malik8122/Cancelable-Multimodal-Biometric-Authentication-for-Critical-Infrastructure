@@ -6,7 +6,7 @@ lifecycle runs on the shipped code (`backend.database.crud` +
 `backend.services.base_service.ModalityService`) against a throw-away in-memory
 SQLite database; only the embedding models are replaced by stubs that return
 the embedding they are handed. Each simulated user is enrolled in THREE
-modalities (face 512-d, fingerprint 256-d, voice 192-d), so every template set
+modalities (face 512-d, fingerprint 512-d, voice 192-d), so every template set
 holds three templates.
 
 - `experiment_template_set_diversity` -> `template_set_diversity.csv`:
@@ -42,7 +42,7 @@ from template_protection.utils import l2_normalize, unpack_bits
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 _APPLICATION_ID = "experiment"
-_MODALITY_DIMS = {"face": 512, "fingerprint": 256, "voice": 192}
+_MODALITY_DIMS = {"face": 512, "fingerprint": 512, "voice": 192}
 #: Std-dev of the Gaussian added to an embedding to simulate a genuine re-capture
 #: (~0.1 L2 norm on a unit vector, i.e. cosine ~0.995).
 _RECAPTURE_NOISE = 0.004
@@ -159,10 +159,10 @@ def experiment_template_set_revocation(num_users: int = 20, seed: int = 1) -> di
             r.modality: unpack_bits(r.protected_template, num_bits=r.output_bits) for r in harness.rows() if r.template_set_version == 1
         }
         genuine = {m: _recapture(rng, e) for m, e in embeddings.items()}
-        before += [r.score for r in harness.authenticate(genuine).values()]
+        before += [r.hamming_similarity for r in harness.authenticate(genuine).values()]
         harness.revoke()
         results = harness.authenticate(genuine)
-        after += [r.score for r in results.values()]
+        after += [r.hamming_similarity for r in results.values()]
         switched_together += int({r.template_set_version for r in results.values()} == {2})
         for modality, result in results.items():
             key = derive_key(_SECRET, application_id=_APPLICATION_ID, user_id="u1", modality=modality, key_version=result.key_version)
@@ -192,7 +192,7 @@ def experiment_template_set_promotion(num_users: int = 20, seed: int = 2) -> dic
             versions = {r.template_set_version for r in results.values()}
             mixed_set_attempts += int(len(versions) != 1)
             for r in results.values():
-                by_set.setdefault(r.template_set_version, []).append(r.score)
+                by_set.setdefault(r.template_set_version, []).append(r.hamming_similarity)
             try:
                 harness.revoke()
             except Exception:  # noqa: BLE001 - pool exhausted after the last set

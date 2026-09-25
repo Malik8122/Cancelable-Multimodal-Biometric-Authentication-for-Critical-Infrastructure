@@ -1,5 +1,21 @@
 # Project Report — Privacy-Preserving Multimodal Biometric Authentication
 
+> **Status of this document (corrections from the 2026-09-25 code audit, `docs/MASTER_PROJECT_AUDIT.md`).** This is the
+> **Phase-1** report. Its training logs are kept as historical records. Where it conflicts with the code, the code wins:
+>
+> - **Modalities deployed:** face, voice and fingerprint, all optional. Users submit any enrolled subset, and
+>   ALL_REQUIRED applies to the submitted ones. The research evaluation focuses on face + voice. **Iris has no trained checkpoint** and runs only on a mock embedder,
+>   so no iris result exists.
+> - **Fingerprint:** the checkpoint was replaced after this report (commits `fc9fd47` / `3a0bfeb`). The current
+>   512-D model scores **EER 30.77 %, AUC 0.7644** (SOCOFing, 900 samples, 404,550 pairs; `evaluation/results/fingerprint_metrics.csv`,
+>   independently re-verified). The 44.5 % / 0.579 figures in §8.2 describe the superseded model only
+>   (`docs/FINGERPRINT_DOCUMENTATION_AUDIT.md`).
+> - **Face preprocessing:** the crop is a bounding-box crop resized to 160×160. MTCNN landmarks are **not** used to warp
+>   the face. An optional similarity-alignment mode exists; see `evaluation/reports/FACE_ALIGNMENT_DECISION.md`.
+> - **Face "EER 0.010"** in §8.2 is the notebook's closed-set test on the 62 training identities. The held-out,
+>   identity-disjoint protected-template EER is 8.50 % (`evaluation/results/protected_vs_raw.csv`).
+> - Current, traceable numbers: `evaluation/PAPER_RESULTS_INDEX.md`.
+
 This document is the single reference for understanding *what this project is, why it is built this way, and what has actually been done so far*. It is written to double as evaluation/viva preparation: Section 9 collects the questions a reviewer is most likely to ask, with grounded answers you can defend. For a deep, code-level walkthrough of every computer-vision technique used, see the companion document [`COMPUTER_VISION.md`](COMPUTER_VISION.md).
 
 ---
@@ -139,8 +155,8 @@ Enrollment and authentication are decided by the *user*; buildings supply only c
   submitted modality that is not enrolled is **`ENROLLMENT_REQUIRED`** (HTTP 409): it is not authenticated, nothing is evaluated,
   and it is audited as its own state - not as a failure. Otherwise the result is `ACCESS_GRANTED` or `ACCESS_DENIED`.
 
-Enrollment quality: face is a one-time five-pose enrollment (front, left, right, slight up, slight down) - per pose MTCNN + alignment + a 512-d FaceNet embedding, only blurry or
-faceless poses rejected, the valid embeddings averaged into a centroid, the temporary embeddings discarded and the templates generated from the centroid alone;
+Enrollment quality: face is a one-time five-pose enrollment (front, left, right, slight up, slight down) - per pose MTCNN + bounding-box crop + a 512-d FaceNet embedding, poses rejected by the quality gates (no face, several faces, low
+confidence, blur, too small, off-centre, too angled; at least 3 of 5 must pass), the valid embeddings averaged into a centroid, the temporary embeddings discarded and the templates generated from the centroid alone;
 voice takes two recordings and grades them by the ECAPA embedding cosine (Excellent/Good enrolled, Fair warns, Poor rejects and stores nothing). Template sets stay one revocable credential
 (T1 ACTIVE, T2-T4 STANDBY for every enrolled modality). All seven modality combinations enroll and authenticate independently through
 the same fusion engine (`tests/test_flexible_auth.py`).
@@ -192,6 +208,12 @@ Face | Accuracy@EER-threshold: 0.990   EER: 0.010   AUC: 0.999
 epoch 12/12 | train_loss=2.5078  train_acc=0.682  val_acc=0.000
 Fingerprint | Accuracy@EER-threshold: 0.555   EER: 0.445   AUC: 0.579
 ```
+
+> **Superseded (historical record of that run only).** The fingerprint model above was replaced (full-backbone
+> fine-tuning, subject-level split; commits `fc9fd47` / `3a0bfeb`). The **current** checkpoint
+> `models/fingerprint/saved/fingerprint_embedder.pt` (512-D) scores **EER 0.3077, AUC 0.7644, accuracy 0.6923** on
+> SOCOFing (900 samples, all 404,550 pairs; `evaluation/results/fingerprint_metrics.csv`, recomputed in
+> `evaluation/metric_verification_report.md`). The analysis in the next paragraph applies to the old model only.
 
 Both checkpoints (`.pt` + `.h5`, ~112 MB and ~96 MB respectively) are committed to the `phase-1-foundation` branch via Git LFS.
 
